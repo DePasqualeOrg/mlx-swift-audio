@@ -51,10 +51,7 @@ private struct ProviderAndVoiceSection: View {
 
       Spacer()
 
-      VoicePickerView(
-        voices: appState.availableVoices,
-        selectedVoiceID: $appState.selectedVoiceID,
-      )
+      VoicePickerView()
     }
   }
 }

@@ -6,10 +6,17 @@ import MLXAudio
 @MainActor
 @Observable
 final class EngineManager {
+  // MARK: - Engines
+
+  private(set) var kokoroEngine = KokoroEngine()
+  private(set) var orpheusEngine = OrpheusEngine()
+  private(set) var marvisEngine = MarvisEngine()
+  private(set) var outeTTSEngine = OuteTTSEngine()
+
   // MARK: - State
 
-  /// The current TTS engine instance
-  private(set) var currentEngine: any TTSEngine
+  /// Currently selected provider
+  private(set) var selectedProvider: TTSProvider = .kokoro
 
   /// Whether a model is currently being loaded
   private(set) var isLoading: Bool = false
@@ -20,26 +27,33 @@ final class EngineManager {
   /// Last error that occurred
   private(set) var error: TTSError?
 
+  // MARK: - Voice Selection (string-based for UI)
+
+  var kokoroVoice: KokoroTTS.Voice = .afHeart
+  var orpheusVoice: OrpheusTTS.Voice = .tara
+  var marvisVoice: MarvisTTS.Voice = .conversationalA
+
   // MARK: - Computed Properties
 
-  var selectedProvider: TTSProvider { currentEngine.provider }
+  var currentEngine: any TTSEngine {
+    switch selectedProvider {
+      case .kokoro: kokoroEngine
+      case .orpheus: orpheusEngine
+      case .marvis: marvisEngine
+      case .outetts: outeTTSEngine
+    }
+  }
+
   var isLoaded: Bool { currentEngine.isLoaded }
   var isGenerating: Bool { currentEngine.isGenerating }
   var isPlaying: Bool { currentEngine.isPlaying }
   var generationTime: TimeInterval { currentEngine.generationTime }
   var lastGeneratedAudioURL: URL? { currentEngine.lastGeneratedAudioURL }
-  var availableVoices: [Voice] { currentEngine.availableVoices }
-  var supportsStreaming: Bool { currentEngine is StreamingTTSEngine }
-
-  var selectedVoiceID: String {
-    get { currentEngine.selectedVoiceID }
-    set { currentEngine.selectedVoiceID = newValue }
-  }
 
   // MARK: - Initialization
 
   init(initialProvider: TTSProvider = .kokoro) {
-    currentEngine = Self.createEngine(for: initialProvider)
+    selectedProvider = initialProvider
   }
 
   // MARK: - Engine Lifecycle
@@ -47,9 +61,7 @@ final class EngineManager {
   /// Switch to a different TTS provider
   func selectProvider(_ provider: TTSProvider) async {
     guard provider != selectedProvider else { return }
-
-    try? await currentEngine.cleanup()
-    currentEngine = Self.createEngine(for: provider)
+    selectedProvider = provider
     error = nil
   }
 
@@ -67,10 +79,31 @@ final class EngineManager {
     MLX.GPU.set(cacheLimit: TTSConstants.Memory.gpuCacheLimit)
 
     do {
-      try await currentEngine.load { [weak self] progress in
-        Task { @MainActor in
-          self?.loadingProgress = progress.fractionCompleted
-        }
+      switch selectedProvider {
+        case .kokoro:
+          try await kokoroEngine.load { [weak self] progress in
+            Task { @MainActor in
+              self?.loadingProgress = progress.fractionCompleted
+            }
+          }
+        case .orpheus:
+          try await orpheusEngine.load { [weak self] progress in
+            Task { @MainActor in
+              self?.loadingProgress = progress.fractionCompleted
+            }
+          }
+        case .marvis:
+          try await marvisEngine.load(voice: marvisVoice) { [weak self] progress in
+            Task { @MainActor in
+              self?.loadingProgress = progress.fractionCompleted
+            }
+          }
+        case .outetts:
+          try await outeTTSEngine.load { [weak self] progress in
+            Task { @MainActor in
+              self?.loadingProgress = progress.fractionCompleted
+            }
+          }
       }
       isLoading = false
       loadingProgress = 1.0
@@ -93,7 +126,16 @@ final class EngineManager {
     MLX.GPU.set(cacheLimit: TTSConstants.Memory.gpuCacheLimit)
 
     do {
-      return try await currentEngine.generate(text: text, speed: speed)
+      switch selectedProvider {
+        case .kokoro:
+          return try await kokoroEngine.generate(text, voice: kokoroVoice, speed: speed)
+        case .orpheus:
+          return try await orpheusEngine.generate(text, voice: orpheusVoice)
+        case .marvis:
+          return try await marvisEngine.generate(text)
+        case .outetts:
+          return try await outeTTSEngine.generate(text)
+      }
     } catch let e as TTSError {
       error = e
       throw e
@@ -105,33 +147,22 @@ final class EngineManager {
   }
 
   /// Generate with streaming (Marvis only)
-  func generateStreaming(text: String, speed: Float) -> AsyncThrowingStream<AudioChunk, Error> {
-    guard let streamingEngine = currentEngine as? StreamingTTSEngine else {
+  func generateStreaming(text: String) -> AsyncThrowingStream<AudioChunk, Error> {
+    guard selectedProvider == .marvis else {
       return AsyncThrowingStream { continuation in
         continuation.finish(throwing: TTSError.invalidArgument("Streaming not supported"))
       }
     }
-    return streamingEngine.generateStreaming(text: text, speed: speed)
+    return marvisEngine.generateStreaming(text)
   }
 
-  /// Play the last generated audio
-  func play() async throws {
-    try await currentEngine.play()
+  /// Play audio result
+  func play(_ audio: AudioResult) async {
+    await audio.play()
   }
 
   /// Stop generation and playback
   func stop() async {
     await currentEngine.stop()
-  }
-
-  // MARK: - Private
-
-  private static func createEngine(for provider: TTSProvider) -> any TTSEngine {
-    switch provider {
-      case .kokoro: KokoroEngine()
-      case .orpheus: OrpheusEngine()
-      case .marvis: MarvisEngine()
-      case .outetts: OuteTTSEngineWrapper()
-    }
   }
 }

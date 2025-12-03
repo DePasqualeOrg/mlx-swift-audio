@@ -27,6 +27,9 @@ let package = Package(
       ],
       path: "package",
       exclude: ["Tests"],
+      resources: [
+        .process("TTS/OuteTTS/default_speaker.json"),
+      ],
     ),
     .testTarget(
       name: "MLXAudioTests",

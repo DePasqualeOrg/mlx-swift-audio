@@ -13,14 +13,14 @@ class VoiceLoader {
   // Hugging Face repo configuration
   static let defaultRepoId = "mlx-community/Kokoro-82M-bf16"
 
-  static var availableVoices: [TTSVoice] {
-    TTSVoice.allCases
+  static var availableVoices: [KokoroTTS.Voice] {
+    KokoroTTS.Voice.allCases
   }
 
   /// Load a voice from Hugging Face Hub (safetensors).
   /// Files are cached locally by Hub.snapshot() to avoid re-downloading.
   static func loadVoice(
-    _ voice: TTSVoice,
+    _ voice: KokoroTTS.Voice,
     repoId: String = defaultRepoId,
     progressHandler: @escaping (Progress) -> Void = { _ in },
   ) async throws -> MLXArray {
@@ -64,8 +64,8 @@ class VoiceLoader {
   }
 }
 
-// Extension to add utility methods to TTSVoice
-extension TTSVoice {
+// Extension to add utility methods to KokoroTTS.Voice
+extension KokoroTTS.Voice {
   /// The voice identifier used for file names (e.g., "af_heart")
   var identifier: String {
     switch self {
@@ -124,7 +124,7 @@ extension TTSVoice {
     }
   }
 
-  static func fromIdentifier(_ identifier: String) -> TTSVoice? {
-    TTSVoice.allCases.first { $0.identifier == identifier }
+  static func fromIdentifier(_ identifier: String) -> KokoroTTS.Voice? {
+    KokoroTTS.Voice.allCases.first { $0.identifier == identifier }
   }
 }

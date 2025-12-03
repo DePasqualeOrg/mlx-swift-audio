@@ -9,8 +9,8 @@ import Foundation
 
 /// Core protocol that all TTS engines must conform to.
 ///
-/// Note: We avoid `associatedtype` to allow using `any TTSEngine` as an existential type.
-/// Voice selection uses string IDs instead.
+/// Voice selection and generation are engine-specific since each engine
+/// has different voice types (enums, speaker profiles with reference audio, etc.)
 @MainActor
 public protocol TTSEngine: Observable {
   /// The provider type for this engine
@@ -33,29 +33,11 @@ public protocol TTSEngine: Observable {
   /// Time taken for the last generation (seconds)
   var generationTime: TimeInterval { get }
 
-  // MARK: - Voice Management
-
-  /// Available voices for this engine
-  var availableVoices: [Voice] { get }
-
-  /// Currently selected voice ID
-  var selectedVoiceID: String { get set }
-
   // MARK: - Lifecycle Methods
 
   /// Load the model with optional progress reporting
   /// - Parameter progressHandler: Optional callback for download/load progress
   func load(progressHandler: (@Sendable (Progress) -> Void)?) async throws
-
-  /// Generate audio from text
-  /// - Parameters:
-  ///   - text: The text to synthesize
-  ///   - speed: Playback speed multiplier (1.0 = normal)
-  /// - Returns: The generated audio result
-  func generate(text: String, speed: Float) async throws -> AudioResult
-
-  /// Play the last generated audio
-  func play() async throws
 
   /// Stop any ongoing generation or playback
   func stop() async
@@ -66,37 +48,11 @@ public protocol TTSEngine: Observable {
 
 // MARK: - Default Implementations
 
-extension TTSEngine {
+public extension TTSEngine {
   /// Load the model without progress reporting
-  public func load() async throws {
+  func load() async throws {
     try await load(progressHandler: nil)
   }
-
-  /// Generate audio with default speed
-  public func generate(text: String) async throws -> AudioResult {
-    try await generate(text: text, speed: 1.0)
-  }
-
-  /// Generate and immediately play audio
-  public func say(_ text: String, speed: Float = 1.0) async throws {
-    let audio = try await generate(text: text, speed: speed)
-    await audio.play()
-  }
-}
-
-// MARK: - Streaming Support
-
-/// Optional streaming support - only engines with real-time streaming capability conform.
-///
-/// Currently only MarvisEngine supports streaming.
-@MainActor
-public protocol StreamingTTSEngine: TTSEngine {
-  /// Generate audio as a stream of chunks
-  /// - Parameters:
-  ///   - text: The text to synthesize
-  ///   - speed: Playback speed multiplier (1.0 = normal)
-  /// - Returns: An async stream of audio chunks
-  func generateStreaming(text: String, speed: Float) -> AsyncThrowingStream<AudioChunk, Error>
 }
 
 /// A chunk of audio data for streaming playback

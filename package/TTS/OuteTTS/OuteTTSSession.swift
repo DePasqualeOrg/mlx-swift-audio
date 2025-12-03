@@ -1,5 +1,5 @@
 //
-//  OuteTTSEngine.swift
+//  OuteTTSSession.swift
 //  MLXAudio
 //
 //  Ported from: mlx_audio/tts/models/outetts/outetts.py
@@ -83,7 +83,7 @@ struct OuteTTSGenerationResult: Sendable {
 
 // MARK: - OuteTTS Engine
 
-actor OuteTTSEngine {
+actor OuteTTSSession {
   private let config: OuteTTSConfig
 
   private nonisolated(unsafe) var model: OuteTTSLlamaModel?
@@ -266,7 +266,7 @@ actor OuteTTSEngine {
 
   /// Load default speaker profile from bundle
   private func loadDefaultSpeaker() -> OuteTTSSpeakerProfile? {
-    guard let url = Bundle.main.url(forResource: "default_speaker", withExtension: "json") else {
+    guard let url = Bundle.module.url(forResource: "default_speaker", withExtension: "json") else {
       return nil
     }
 

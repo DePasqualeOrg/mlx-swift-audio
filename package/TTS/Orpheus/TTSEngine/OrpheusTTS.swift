@@ -8,17 +8,6 @@ import MLXRandom
 // Orpheus TTS - Swift implementation of the Orpheus 3B model
 // Python equivalent: mlx_audio/tts/models/llama/llama.py
 
-enum OrpheusVoice: String, CaseIterable, Sendable {
-  case tara // Female, conversational, clear
-  case leah // Female, warm, gentle
-  case jess // Female, energetic, youthful
-  case leo // Male, authoritative, deep
-  case dan // Male, friendly, casual
-  case mia // Female, professional, articulate
-  case zac // Male, enthusiastic, dynamic
-  case zoe // Female, calm, soothing
-}
-
 // MARK: - Profiling Helper
 
 enum Profiler {
@@ -55,7 +44,18 @@ private struct InferenceState: @unchecked Sendable {
   var currentIds: MLXArray
 }
 
-actor OrpheusTTS {
+public actor OrpheusTTS {
+  public enum Voice: String, CaseIterable, Sendable {
+    case tara // Female, conversational, clear
+    case leah // Female, warm, gentle
+    case jess // Female, energetic, youthful
+    case leo // Male, authoritative, deep
+    case dan // Male, friendly, casual
+    case mia // Female, professional, articulate
+    case zac // Male, enthusiastic, dynamic
+    case zoe // Female, calm, soothing
+  }
+
   enum OrpheusTTSError: LocalizedError {
     case tooManyTokens
     case weightsNotAvailable
@@ -96,7 +96,7 @@ actor OrpheusTTS {
   // but are only accessed within the actor's methods
   private nonisolated(unsafe) let model: OrpheusLMHeadModel
   private nonisolated(unsafe) let snacDecoder: SNACDecoder
-  private var chosenVoice: OrpheusVoice?
+  private var chosenVoice: Voice?
   private let tokenizer: OrpheusTokenizer
 
   private init(model: OrpheusLMHeadModel, snacDecoder: SNACDecoder, tokenizer: OrpheusTokenizer) {
@@ -170,7 +170,7 @@ actor OrpheusTTS {
     return OrpheusTTS(model: model, snacDecoder: snacDecoder, tokenizer: tokenizer)
   }
 
-  func generateAudio(voice: OrpheusVoice, text: String, temperature: Float = 0.6, topP: Float = 0.8) async throws -> [Float] {
+  func generateAudio(voice: Voice, text: String, temperature: Float = 0.6, topP: Float = 0.8) async throws -> [Float] {
     let totalGenerationStart = CFAbsoluteTimeGetCurrent()
 
     // Prepare input with voice prefix

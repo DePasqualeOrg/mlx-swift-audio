@@ -6,7 +6,6 @@
 //  Wraps the existing OrpheusTTS implementation.
 //
 
-import AVFoundation
 import Foundation
 
 /// Orpheus TTS engine - high quality with emotional expressions
@@ -25,12 +24,6 @@ public final class OrpheusEngine: TTSEngine {
   public private(set) var lastGeneratedAudioURL: URL?
   public private(set) var generationTime: TimeInterval = 0
 
-  public var availableVoices: [Voice] {
-    TTSProvider.orpheus.availableVoices
-  }
-
-  public var selectedVoiceID: String = TTSProvider.orpheus.defaultVoiceID
-
   // MARK: - Orpheus-Specific Properties
 
   /// Temperature for sampling (higher = more variation)
@@ -42,9 +35,7 @@ public final class OrpheusEngine: TTSEngine {
   // MARK: - Private Properties
 
   @ObservationIgnored private var orpheusTTS: OrpheusTTS?
-  @ObservationIgnored private var audioPlayer: AudioSamplePlayer?
   @ObservationIgnored private var generationTask: Task<Void, Never>?
-  @ObservationIgnored private var lastGeneratedSamples: [Float] = []
 
   // MARK: - Initialization
 
@@ -71,8 +62,6 @@ public final class OrpheusEngine: TTSEngine {
         progressHandler: progressHandler ?? { _ in },
       )
 
-      audioPlayer = AudioSamplePlayer(sampleRate: TTSConstants.Audio.orpheusSampleRate)
-
       isLoaded = true
       Log.model.info("Orpheus TTS model loaded successfully")
     } catch {
@@ -81,9 +70,40 @@ public final class OrpheusEngine: TTSEngine {
     }
   }
 
-  public func generate(text: String, speed _: Float) async throws -> AudioResult {
-    // Note: Orpheus doesn't support speed adjustment, parameter is ignored
-    guard isLoaded, let orpheusTTS else {
+  public func stop() async {
+    generationTask?.cancel()
+    generationTask = nil
+    isGenerating = false
+    isPlaying = false
+
+    Log.tts.debug("OrpheusEngine stopped")
+  }
+
+  public func cleanup() async throws {
+    await stop()
+
+    orpheusTTS = nil
+    isLoaded = false
+
+    Log.tts.debug("OrpheusEngine cleaned up")
+  }
+
+  // MARK: - Generation
+
+  /// Generate audio from text
+  /// - Parameters:
+  ///   - text: The text to synthesize
+  ///   - voice: The voice to use (default: .tara)
+  /// - Returns: The generated audio result
+  public func generate(
+    _ text: String,
+    voice: OrpheusTTS.Voice = .tara,
+  ) async throws -> AudioResult {
+    if !isLoaded {
+      try await load()
+    }
+
+    guard let orpheusTTS else {
       throw TTSError.modelNotLoaded
     }
 
@@ -95,14 +115,8 @@ public final class OrpheusEngine: TTSEngine {
     generationTask?.cancel()
     isGenerating = true
     generationTime = 0
-    lastGeneratedSamples = []
 
     let startTime = Date()
-
-    guard let voice = resolveVoice(selectedVoiceID) else {
-      isGenerating = false
-      throw TTSError.invalidVoice(selectedVoiceID)
-    }
 
     do {
       let samples = try await orpheusTTS.generateAudio(
@@ -115,16 +129,12 @@ public final class OrpheusEngine: TTSEngine {
       generationTime = Date().timeIntervalSince(startTime)
       Log.tts.timing("Orpheus generation", duration: generationTime)
 
-      lastGeneratedSamples = samples
-
       isGenerating = false
 
-      // Calculate audio duration for RTF
       let audioDuration = Double(samples.count) / Double(TTSConstants.Audio.orpheusSampleRate)
       let rtf = generationTime / audioDuration
       Log.tts.rtf("Orpheus", rtf: rtf)
 
-      // Save to file
       do {
         let fileURL = try AudioFileWriter.save(
           samples: samples,
@@ -149,60 +159,17 @@ public final class OrpheusEngine: TTSEngine {
     }
   }
 
-  public func play() async throws {
-    guard let audioPlayer else {
-      throw TTSError.modelNotLoaded
-    }
-
-    guard !lastGeneratedSamples.isEmpty else {
-      Log.audio.warning("No audio to play")
-      return
-    }
-
+  /// Generate and immediately play audio
+  /// - Parameters:
+  ///   - text: The text to synthesize
+  ///   - voice: The voice to use (default: .tara)
+  public func say(
+    _ text: String,
+    voice: OrpheusTTS.Voice = .tara,
+  ) async throws {
+    let audio = try await generate(text, voice: voice)
     isPlaying = true
-    await audioPlayer.play(samples: lastGeneratedSamples)
+    await audio.play()
     isPlaying = false
-  }
-
-  public func stop() async {
-    generationTask?.cancel()
-    generationTask = nil
-    isGenerating = false
-
-    await audioPlayer?.stop()
-    isPlaying = false
-
-    Log.tts.debug("OrpheusEngine stopped")
-  }
-
-  public func cleanup() async throws {
-    await stop()
-
-    orpheusTTS = nil
-    audioPlayer = nil
-    lastGeneratedSamples.removeAll()
-    isLoaded = false
-
-    Log.tts.debug("OrpheusEngine cleaned up")
-  }
-
-  // MARK: - Private Helpers
-
-  private func resolveVoice(_ voiceID: String) -> OrpheusVoice? {
-    OrpheusVoice(rawValue: voiceID)
-  }
-}
-
-// MARK: - Voice Helpers
-
-extension OrpheusEngine {
-  /// Get the Voice object for the currently selected voice
-  var selectedVoice: Voice? {
-    availableVoices.first { $0.id == selectedVoiceID }
-  }
-
-  /// Select a voice by Voice object
-  func selectVoice(_ voice: Voice) {
-    selectedVoiceID = voice.id
   }
 }

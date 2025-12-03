@@ -35,10 +35,7 @@ struct RegularLayoutView: View {
               },
             )
 
-            VoicePickerView(
-              voices: appState.availableVoices,
-              selectedVoiceID: $appState.selectedVoiceID,
-            )
+            VoicePickerView()
           }
         }
     }

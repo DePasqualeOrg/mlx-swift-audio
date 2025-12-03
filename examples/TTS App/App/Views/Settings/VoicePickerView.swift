@@ -2,42 +2,132 @@ import MLXAudio
 import SwiftUI
 
 struct VoicePickerView: View {
-  let voices: [Voice]
-  @Binding var selectedVoiceID: String
+  @Environment(AppState.self) private var appState
 
-  private var selectedVoice: Voice? {
-    voices.first { $0.id == selectedVoiceID }
+  var body: some View {
+    @Bindable var appState = appState
+    switch appState.selectedProvider {
+      case .kokoro:
+        KokoroVoicePicker(voice: $appState.kokoroVoice)
+      case .orpheus:
+        OrpheusVoicePicker(voice: $appState.orpheusVoice)
+      case .marvis:
+        MarvisVoicePicker(voice: $appState.marvisVoice)
+      case .outetts:
+        Text("Default Voice")
+          .padding(.horizontal, 12)
+          .padding(.vertical, 8)
+          .background(.background.secondary)
+          .clipShape(RoundedRectangle(cornerRadius: 8))
+    }
   }
+}
+
+// MARK: - Kokoro Voice Picker
+
+private struct KokoroVoicePicker: View {
+  @Binding var voice: KokoroTTS.Voice
 
   var body: some View {
     Menu {
-      ForEach(voices) { voice in
+      ForEach(KokoroTTS.Voice.allCases, id: \.self) { v in
         Button {
-          selectedVoiceID = voice.id
+          voice = v
         } label: {
-          if voice.id == selectedVoiceID {
-            Label("\(voice.languageFlag) \(voice.displayName)", systemImage: "checkmark")
+          if v == voice {
+            Label(v.displayName, systemImage: "checkmark")
           } else {
-            Text("\(voice.languageFlag) \(voice.displayName)")
+            Text(v.displayName)
           }
         }
       }
     } label: {
-      HStack(spacing: 6) {
-        if let voice = selectedVoice {
-          Text("\(voice.languageFlag) \(voice.displayName)")
-            .lineLimit(1)
-        } else {
-          Text("Select Voice")
-        }
-        Image(systemName: "chevron.up.chevron.down")
-          .font(.caption)
-      }
-      .padding(.horizontal, 12)
-      .padding(.vertical, 8)
-      .background(.background.secondary)
-      .clipShape(RoundedRectangle(cornerRadius: 8))
+      voiceLabel(voice.displayName)
     }
     .buttonStyle(.plain)
+  }
+}
+
+// MARK: - Orpheus Voice Picker
+
+private struct OrpheusVoicePicker: View {
+  @Binding var voice: OrpheusTTS.Voice
+
+  var body: some View {
+    Menu {
+      ForEach(OrpheusTTS.Voice.allCases, id: \.self) { v in
+        Button {
+          voice = v
+        } label: {
+          if v == voice {
+            Label(v.rawValue.capitalized, systemImage: "checkmark")
+          } else {
+            Text(v.rawValue.capitalized)
+          }
+        }
+      }
+    } label: {
+      voiceLabel(voice.rawValue.capitalized)
+    }
+    .buttonStyle(.plain)
+  }
+}
+
+// MARK: - Marvis Voice Picker
+
+private struct MarvisVoicePicker: View {
+  @Binding var voice: MarvisTTS.Voice
+
+  var body: some View {
+    Menu {
+      ForEach(MarvisTTS.Voice.allCases, id: \.self) { v in
+        Button {
+          voice = v
+        } label: {
+          if v == voice {
+            Label(displayName(for: v), systemImage: "checkmark")
+          } else {
+            Text(displayName(for: v))
+          }
+        }
+      }
+    } label: {
+      voiceLabel(displayName(for: voice))
+    }
+    .buttonStyle(.plain)
+  }
+
+  private func displayName(for voice: MarvisTTS.Voice) -> String {
+    switch voice {
+      case .conversationalA: "Conversational A"
+      case .conversationalB: "Conversational B"
+    }
+  }
+}
+
+// MARK: - Shared Styling
+
+@ViewBuilder
+private func voiceLabel(_ text: String) -> some View {
+  HStack(spacing: 6) {
+    Text(text)
+      .lineLimit(1)
+    Image(systemName: "chevron.up.chevron.down")
+      .font(.caption)
+  }
+  .padding(.horizontal, 12)
+  .padding(.vertical, 8)
+  .background(.background.secondary)
+  .clipShape(RoundedRectangle(cornerRadius: 8))
+}
+
+// MARK: - Voice Display Name Extension
+
+extension KokoroTTS.Voice {
+  var displayName: String {
+    // Format: afHeart -> Heart
+    let name = String(describing: self)
+    guard name.count > 2 else { return name.capitalized }
+    return String(name.dropFirst(2)).capitalized
   }
 }

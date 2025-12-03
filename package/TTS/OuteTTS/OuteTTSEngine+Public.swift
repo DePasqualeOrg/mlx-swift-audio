@@ -1,18 +1,19 @@
 //
-//  OuteTTSEngineWrapper.swift
+//  OuteTTSEngine+Public.swift
 //  MLXAudio
 //
 //  OuteTTS engine conforming to TTSEngine protocol.
 //  Wraps the OuteTTSEngine actor implementation.
 //
 
-import AVFoundation
 import Foundation
 
-/// OuteTTS engine - TTS with speaker profiles
+/// OuteTTS engine - TTS with custom speaker profiles
+///
+/// Supports custom speaker profiles with reference audio.
 @Observable
 @MainActor
-public final class OuteTTSEngineWrapper: TTSEngine {
+public final class OuteTTSEngine: TTSEngine {
   // MARK: - TTSEngine Protocol Properties
 
   public let provider: TTSProvider = .outetts
@@ -22,12 +23,6 @@ public final class OuteTTSEngineWrapper: TTSEngine {
   public private(set) var lastGeneratedAudioURL: URL?
   public private(set) var generationTime: TimeInterval = 0
 
-  public var availableVoices: [Voice] {
-    TTSProvider.outetts.availableVoices
-  }
-
-  public var selectedVoiceID: String = TTSProvider.outetts.defaultVoiceID
-
   // MARK: - OuteTTS-Specific Properties
 
   /// Temperature for sampling (higher = more variation)
@@ -36,22 +31,17 @@ public final class OuteTTSEngineWrapper: TTSEngine {
   /// Top-p (nucleus) sampling threshold
   public var topP: Float = 0.9
 
-  /// Path to custom speaker profile
-  public var customSpeakerPath: String?
-
   // MARK: - Private Properties
 
-  @ObservationIgnored private var outeTTS: OuteTTSEngine?
-  @ObservationIgnored private var audioPlayer: AudioSamplePlayer?
+  @ObservationIgnored private var outeTTS: OuteTTSSession?
   @ObservationIgnored private var generationTask: Task<Void, Never>?
-  @ObservationIgnored private var lastGeneratedSamples: [Float] = []
 
   private static let sampleRate = 24000
 
   // MARK: - Initialization
 
   public init() {
-    Log.tts.debug("OuteTTSEngineWrapper initialized")
+    Log.tts.debug("OuteTTSEngine initialized")
   }
 
   deinit {
@@ -62,18 +52,16 @@ public final class OuteTTSEngineWrapper: TTSEngine {
 
   public func load(progressHandler: (@Sendable (Progress) -> Void)?) async throws {
     guard !isLoaded else {
-      Log.tts.debug("OuteTTSEngineWrapper already loaded")
+      Log.tts.debug("OuteTTSEngine already loaded")
       return
     }
 
     Log.model.info("Loading OuteTTS model...")
 
     do {
-      let engine = OuteTTSEngine()
+      let engine = OuteTTSSession()
       try await engine.load(progressHandler: progressHandler ?? { _ in })
       outeTTS = engine
-
-      audioPlayer = AudioSamplePlayer(sampleRate: Self.sampleRate)
 
       isLoaded = true
       Log.model.info("OuteTTS model loaded successfully")
@@ -83,9 +71,40 @@ public final class OuteTTSEngineWrapper: TTSEngine {
     }
   }
 
-  public func generate(text: String, speed _: Float) async throws -> AudioResult {
-    // Note: OuteTTS doesn't support speed adjustment, parameter is ignored
-    guard isLoaded, let outeTTS else {
+  public func stop() async {
+    generationTask?.cancel()
+    generationTask = nil
+    isGenerating = false
+    isPlaying = false
+
+    Log.tts.debug("OuteTTSEngine stopped")
+  }
+
+  public func cleanup() async throws {
+    await stop()
+
+    outeTTS = nil
+    isLoaded = false
+
+    Log.tts.debug("OuteTTSEngine cleaned up")
+  }
+
+  // MARK: - Generation
+
+  /// Generate audio from text
+  /// - Parameters:
+  ///   - text: The text to synthesize
+  ///   - speaker: Optional speaker profile (nil uses default voice)
+  /// - Returns: The generated audio result
+  public func generate(
+    _ text: String,
+    speaker: OuteTTSSpeakerProfile? = nil,
+  ) async throws -> AudioResult {
+    if !isLoaded {
+      try await load()
+    }
+
+    guard let outeTTS else {
       throw TTSError.modelNotLoaded
     }
 
@@ -97,14 +116,10 @@ public final class OuteTTSEngineWrapper: TTSEngine {
     generationTask?.cancel()
     isGenerating = true
     generationTime = 0
-    lastGeneratedSamples = []
 
     let startTime = Date()
 
     do {
-      // Get speaker profile based on selected voice
-      let speaker = resolveSpeaker()
-
       let result = try await outeTTS.generate(
         text: trimmedText,
         speaker: speaker,
@@ -115,16 +130,12 @@ public final class OuteTTSEngineWrapper: TTSEngine {
       generationTime = Date().timeIntervalSince(startTime)
       Log.tts.timing("OuteTTS generation", duration: generationTime)
 
-      lastGeneratedSamples = result.audio
-
       isGenerating = false
 
-      // Calculate audio duration for RTF
       let audioDuration = result.duration
       let rtf = generationTime / audioDuration
       Log.tts.rtf("OuteTTS", rtf: rtf)
 
-      // Save to file
       do {
         let fileURL = try AudioFileWriter.save(
           samples: result.audio,
@@ -149,79 +160,26 @@ public final class OuteTTSEngineWrapper: TTSEngine {
     }
   }
 
-  public func play() async throws {
-    guard let audioPlayer else {
-      throw TTSError.modelNotLoaded
-    }
-
-    guard !lastGeneratedSamples.isEmpty else {
-      Log.audio.warning("No audio to play")
-      return
-    }
-
+  /// Generate and immediately play audio
+  /// - Parameters:
+  ///   - text: The text to synthesize
+  ///   - speaker: Optional speaker profile (nil uses default voice)
+  public func say(
+    _ text: String,
+    speaker: OuteTTSSpeakerProfile? = nil,
+  ) async throws {
+    let audio = try await generate(text, speaker: speaker)
     isPlaying = true
-    await audioPlayer.play(samples: lastGeneratedSamples)
+    await audio.play()
     isPlaying = false
   }
 
-  public func stop() async {
-    generationTask?.cancel()
-    generationTask = nil
-    isGenerating = false
+  // MARK: - Speaker Profile Helpers
 
-    await audioPlayer?.stop()
-    isPlaying = false
-
-    Log.tts.debug("OuteTTSEngineWrapper stopped")
-  }
-
-  public func cleanup() async throws {
-    await stop()
-
-    outeTTS = nil
-    audioPlayer = nil
-    lastGeneratedSamples.removeAll()
-    isLoaded = false
-
-    Log.tts.debug("OuteTTSEngineWrapper cleaned up")
-  }
-
-  // MARK: - Extended API
-
-  /// Load a custom speaker profile
-  public func loadCustomSpeaker(from path: String) throws {
-    customSpeakerPath = path
-    selectedVoiceID = "custom"
-  }
-
-  // MARK: - Private Helpers
-
-  private func resolveSpeaker() -> OuteTTSSpeakerProfile? {
-    switch selectedVoiceID {
-      case "default":
-        // Default speaker is loaded by OuteTTSEngine from Hugging Face
-        return nil
-      case "custom":
-        if let path = customSpeakerPath {
-          return try? OuteTTSSpeakerProfile.load(from: path)
-        }
-        return nil
-      default:
-        return nil
-    }
-  }
-}
-
-// MARK: - Voice Helpers
-
-extension OuteTTSEngineWrapper {
-  /// Get the Voice object for the currently selected voice
-  var selectedVoice: Voice? {
-    availableVoices.first { $0.id == selectedVoiceID }
-  }
-
-  /// Select a voice by Voice object
-  func selectVoice(_ voice: Voice) {
-    selectedVoiceID = voice.id
+  /// Load a speaker profile from a JSON file
+  /// - Parameter path: Path to the speaker profile JSON file
+  /// - Returns: The loaded speaker profile
+  public static func loadSpeaker(from path: String) throws -> OuteTTSSpeakerProfile {
+    try OuteTTSSpeakerProfile.load(from: path)
   }
 }

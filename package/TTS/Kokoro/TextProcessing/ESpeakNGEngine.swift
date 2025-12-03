@@ -142,7 +142,7 @@ final class ESpeakNGEngine {
 
   // Sets the language that will be used for phonemizing
   // If the function returns without throwing an exception then consider new language set!
-  func setLanguage(for voice: TTSVoice) throws {
+  func setLanguage(for voice: KokoroTTS.Voice) throws {
     #if !targetEnvironment(simulator)
     guard let language = PhonemeMapping.voice2Language[voice],
           let name = languageMapping[language.rawValue]
@@ -164,7 +164,7 @@ final class ESpeakNGEngine {
     #endif
   }
 
-  func languageForVoice(voice: TTSVoice) throws -> LanguageDialect {
+  func languageForVoice(voice: KokoroTTS.Voice) throws -> LanguageDialect {
     guard let language = PhonemeMapping.voice2Language[voice] else {
       throw ESpeakNGEngineError.languageNotFound
     }
@@ -255,7 +255,7 @@ final class ESpeakNGEngine {
       ("ɬ", "l"),
       ("\u{0303}", ""),
     ].sorted(by: { $0.0.count > $1.0.count })
-    static let voice2Language: [TTSVoice: LanguageDialect] = [
+    static let voice2Language: [KokoroTTS.Voice: LanguageDialect] = [
       .afAlloy: .enUS,
       .afAoede: .enUS,
       .afBella: .enUS,

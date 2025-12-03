@@ -22,19 +22,11 @@ public final class KokoroEngine: TTSEngine {
   public private(set) var lastGeneratedAudioURL: URL?
   public private(set) var generationTime: TimeInterval = 0
 
-  public var availableVoices: [Voice] {
-    TTSProvider.kokoro.availableVoices
-  }
-
-  public var selectedVoiceID: String = TTSProvider.kokoro.defaultVoiceID
-
   // MARK: - Private Properties
 
   @ObservationIgnored private var kokoroTTS: KokoroTTS?
   @ObservationIgnored private var audioPlayer: AudioSamplePlayer?
-  @ObservationIgnored private var audioBuffers: [AVAudioPCMBuffer] = []
   @ObservationIgnored private var generationTask: Task<Void, Never>?
-  @ObservationIgnored private var lastGeneratedSamples: [Float] = []
 
   // MARK: - Initialization
 
@@ -56,21 +48,57 @@ public final class KokoroEngine: TTSEngine {
 
     Log.model.info("Loading Kokoro TTS model...")
 
-    // Create KokoroTTS instance with progress handler
     kokoroTTS = KokoroTTS(
       repoId: KokoroWeightLoader.defaultRepoId,
       progressHandler: progressHandler ?? { _ in },
     )
 
-    // Create audio player
     audioPlayer = AudioSamplePlayer(sampleRate: TTSConstants.Audio.kokoroSampleRate)
 
     isLoaded = true
     Log.model.info("Kokoro TTS model loaded successfully")
   }
 
-  public func generate(text: String, speed: Float) async throws -> AudioResult {
-    guard isLoaded, let kokoroTTS else {
+  public func stop() async {
+    generationTask?.cancel()
+    generationTask = nil
+    isGenerating = false
+
+    await audioPlayer?.stop()
+    isPlaying = false
+
+    Log.tts.debug("KokoroEngine stopped")
+  }
+
+  public func cleanup() async throws {
+    await stop()
+
+    await kokoroTTS?.resetModel(preserveTextProcessing: false)
+    kokoroTTS = nil
+    audioPlayer = nil
+    isLoaded = false
+
+    Log.tts.debug("KokoroEngine cleaned up")
+  }
+
+  // MARK: - Generation
+
+  /// Generate audio from text
+  /// - Parameters:
+  ///   - text: The text to synthesize
+  ///   - voice: The voice to use (default: .afHeart)
+  ///   - speed: Playback speed multiplier (default: 1.0)
+  /// - Returns: The generated audio result
+  public func generate(
+    _ text: String,
+    voice: KokoroTTS.Voice = .afHeart,
+    speed: Float = 1.0,
+  ) async throws -> AudioResult {
+    if !isLoaded {
+      try await load()
+    }
+
+    guard let kokoroTTS else {
       throw TTSError.modelNotLoaded
     }
 
@@ -79,29 +107,20 @@ public final class KokoroEngine: TTSEngine {
       throw TTSError.invalidArgument("Text cannot be empty")
     }
 
-    // Cancel any existing generation
     generationTask?.cancel()
     isGenerating = true
     generationTime = 0
-    lastGeneratedSamples = []
 
     let startTime = Date()
     var allSamples: [Float] = []
     var firstChunkTime: TimeInterval = 0
 
-    // Resolve voice
-    guard let ttsVoice = resolveVoice(selectedVoiceID) else {
-      isGenerating = false
-      throw TTSError.invalidVoice(selectedVoiceID)
-    }
-
     do {
       for try await samples in try await kokoroTTS.generateAudioStream(
-        voice: ttsVoice,
+        voice: voice,
         text: trimmedText,
         speed: speed,
       ) {
-        // Record time to first chunk
         if firstChunkTime == 0 {
           firstChunkTime = Date().timeIntervalSince(startTime)
           generationTime = firstChunkTime
@@ -111,12 +130,10 @@ public final class KokoroEngine: TTSEngine {
       }
 
       isGenerating = false
-      lastGeneratedSamples = allSamples
 
       let totalTime = Date().timeIntervalSince(startTime)
       Log.tts.timing("Kokoro generation", duration: totalTime)
 
-      // Save to file
       do {
         let fileURL = try AudioFileWriter.save(
           samples: allSamples,
@@ -141,52 +158,40 @@ public final class KokoroEngine: TTSEngine {
     }
   }
 
-  public func play() async throws {
-    guard let audioPlayer else {
-      throw TTSError.modelNotLoaded
-    }
-
-    guard !lastGeneratedSamples.isEmpty else {
-      Log.audio.warning("No audio to play")
-      return
-    }
-
+  /// Generate and immediately play audio
+  /// - Parameters:
+  ///   - text: The text to synthesize
+  ///   - voice: The voice to use (default: .afHeart)
+  ///   - speed: Playback speed multiplier (default: 1.0)
+  public func say(
+    _ text: String,
+    voice: KokoroTTS.Voice = .afHeart,
+    speed: Float = 1.0,
+  ) async throws {
+    let audio = try await generate(text, voice: voice, speed: speed)
     isPlaying = true
-    await audioPlayer.play(samples: lastGeneratedSamples)
+    await audio.play()
     isPlaying = false
   }
 
-  public func stop() async {
-    // Cancel generation
-    generationTask?.cancel()
-    generationTask = nil
-    isGenerating = false
-
-    // Stop playback
-    await audioPlayer?.stop()
-    isPlaying = false
-
-    Log.tts.debug("KokoroEngine stopped")
-  }
-
-  public func cleanup() async throws {
-    await stop()
-
-    await kokoroTTS?.resetModel(preserveTextProcessing: false)
-    kokoroTTS = nil
-    audioPlayer = nil
-    audioBuffers.removeAll()
-    lastGeneratedSamples.removeAll()
-    isLoaded = false
-
-    Log.tts.debug("KokoroEngine cleaned up")
-  }
-
-  // MARK: - Extended API
+  // MARK: - Streaming
 
   /// Generate audio with streaming playback (audio plays as it generates)
-  public func generateWithStreaming(text: String, speed: Float = 1.0) async throws -> AudioResult {
-    guard isLoaded, let kokoroTTS, let audioPlayer else {
+  /// - Parameters:
+  ///   - text: The text to synthesize
+  ///   - voice: The voice to use (default: .afHeart)
+  ///   - speed: Playback speed multiplier (default: 1.0)
+  /// - Returns: The generated audio result
+  public func generateWithStreaming(
+    _ text: String,
+    voice: KokoroTTS.Voice = .afHeart,
+    speed: Float = 1.0,
+  ) async throws -> AudioResult {
+    if !isLoaded {
+      try await load()
+    }
+
+    guard let kokoroTTS, let audioPlayer else {
       throw TTSError.modelNotLoaded
     }
 
@@ -199,21 +204,14 @@ public final class KokoroEngine: TTSEngine {
     isGenerating = true
     isPlaying = true
     generationTime = 0
-    lastGeneratedSamples = []
 
     let startTime = Date()
     var allSamples: [Float] = []
     var firstChunkTime: TimeInterval = 0
 
-    guard let ttsVoice = resolveVoice(selectedVoiceID) else {
-      isGenerating = false
-      isPlaying = false
-      throw TTSError.invalidVoice(selectedVoiceID)
-    }
-
     do {
       for try await samples in try await kokoroTTS.generateAudioStream(
-        voice: ttsVoice,
+        voice: voice,
         text: trimmedText,
         speed: speed,
       ) {
@@ -223,19 +221,14 @@ public final class KokoroEngine: TTSEngine {
         }
 
         allSamples.append(contentsOf: samples)
-
-        // Stream to audio player
         audioPlayer.enqueue(samples: samples, prebufferSeconds: 0)
       }
 
       isGenerating = false
-      lastGeneratedSamples = allSamples
 
-      // Wait for playback to complete
       await audioPlayer.awaitCompletion()
       isPlaying = false
 
-      // Save to file
       do {
         let fileURL = try AudioFileWriter.save(
           samples: allSamples,
@@ -258,35 +251,5 @@ public final class KokoroEngine: TTSEngine {
       isPlaying = false
       throw TTSError.generationFailed(underlying: error)
     }
-  }
-
-  // MARK: - Private Helpers
-
-  private func resolveVoice(_ voiceID: String) -> TTSVoice? {
-    // Try direct rawValue match first
-    if let voice = TTSVoice(rawValue: voiceID) {
-      return voice
-    }
-
-    // Try identifier mapping (e.g., "af_heart" -> .afHeart)
-    if let voice = TTSVoice.fromIdentifier(voiceID) {
-      return voice
-    }
-
-    return nil
-  }
-}
-
-// MARK: - Voice ID Helpers
-
-extension KokoroEngine {
-  /// Get the Voice object for the currently selected voice
-  var selectedVoice: Voice? {
-    availableVoices.first { $0.id == selectedVoiceID }
-  }
-
-  /// Select a voice by Voice object
-  func selectVoice(_ voice: Voice) {
-    selectedVoiceID = voice.id
   }
 }

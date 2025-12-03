@@ -48,13 +48,7 @@ final class AppState {
   var error: TTSError? { engineManager.error }
   var generationTime: TimeInterval { engineManager.generationTime }
   var lastGeneratedAudioURL: URL? { engineManager.lastGeneratedAudioURL }
-  var availableVoices: [Voice] { engineManager.availableVoices }
-  var supportsStreaming: Bool { engineManager.supportsStreaming }
-
-  var selectedVoiceID: String {
-    get { engineManager.selectedVoiceID }
-    set { engineManager.selectedVoiceID = newValue }
-  }
+  var supportsStreaming: Bool { selectedProvider == .marvis }
 
   var canGenerate: Bool {
     isLoaded && !inputText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && !isGenerating
@@ -100,8 +94,8 @@ final class AppState {
         statusMessage = formatResultStatus(result)
       }
 
-      if autoPlay {
-        try await engineManager.play()
+      if autoPlay, let result = lastResult {
+        await engineManager.play(result)
       }
     } catch let e as TTSError {
       statusMessage = e.localizedDescription
@@ -126,7 +120,7 @@ final class AppState {
       var sampleRate = 0
       var totalProcessingTime: TimeInterval = 0
 
-      for try await chunk in engineManager.generateStreaming(text: inputText, speed: 1.0) {
+      for try await chunk in engineManager.generateStreaming(text: inputText) {
         if stopRequested { break }
         allSamples.append(contentsOf: chunk.samples)
         sampleRate = chunk.sampleRate
@@ -154,11 +148,8 @@ final class AppState {
 
   /// Play the last generated audio
   func play() async {
-    do {
-      try await engineManager.play()
-    } catch {
-      statusMessage = TTSError.audioPlaybackFailed(underlying: error).localizedDescription
-    }
+    guard let result = lastResult else { return }
+    await engineManager.play(result)
   }
 
   /// Stop generation and playback
@@ -186,36 +177,49 @@ final class AppState {
   }
 }
 
+// MARK: - Voice Selection
+
+extension AppState {
+  var kokoroVoice: KokoroTTS.Voice {
+    get { engineManager.kokoroVoice }
+    set { engineManager.kokoroVoice = newValue }
+  }
+
+  var orpheusVoice: OrpheusTTS.Voice {
+    get { engineManager.orpheusVoice }
+    set { engineManager.orpheusVoice = newValue }
+  }
+
+  var marvisVoice: MarvisTTS.Voice {
+    get { engineManager.marvisVoice }
+    set { engineManager.marvisVoice = newValue }
+  }
+}
+
 // MARK: - Engine-Specific Property Access
 
 extension AppState {
   /// Quality level for Marvis
   var marvisQualityLevel: MarvisTTS.QualityLevel {
-    get { (engineManager.currentEngine as? MarvisEngine)?.qualityLevel ?? .maximum }
-    set { (engineManager.currentEngine as? MarvisEngine)?.qualityLevel = newValue }
-  }
-
-  /// Whether streaming playback is enabled for Marvis
-  var useStreaming: Bool {
-    get { (engineManager.currentEngine as? MarvisEngine)?.playbackEnabled ?? false }
-    set { (engineManager.currentEngine as? MarvisEngine)?.playbackEnabled = newValue }
+    get { engineManager.marvisEngine.qualityLevel }
+    set { engineManager.marvisEngine.qualityLevel = newValue }
   }
 
   /// Streaming interval for Marvis
   var streamingInterval: Double {
-    get { (engineManager.currentEngine as? MarvisEngine)?.streamingInterval ?? TTSConstants.Timing.defaultStreamingInterval }
-    set { (engineManager.currentEngine as? MarvisEngine)?.streamingInterval = newValue }
+    get { engineManager.marvisEngine.streamingInterval }
+    set { engineManager.marvisEngine.streamingInterval = newValue }
   }
 
   /// Temperature for Orpheus
   var orpheusTemperature: Float {
-    get { (engineManager.currentEngine as? OrpheusEngine)?.temperature ?? 0.6 }
-    set { (engineManager.currentEngine as? OrpheusEngine)?.temperature = newValue }
+    get { engineManager.orpheusEngine.temperature }
+    set { engineManager.orpheusEngine.temperature = newValue }
   }
 
   /// Top-P for Orpheus
   var orpheusTopP: Float {
-    get { (engineManager.currentEngine as? OrpheusEngine)?.topP ?? 0.8 }
-    set { (engineManager.currentEngine as? OrpheusEngine)?.topP = newValue }
+    get { engineManager.orpheusEngine.topP }
+    set { engineManager.orpheusEngine.topP = newValue }
   }
 }

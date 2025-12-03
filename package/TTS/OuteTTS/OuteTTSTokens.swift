@@ -124,7 +124,7 @@ struct OuteTTSWordData: Codable, Sendable {
 }
 
 /// Speaker profile
-struct OuteTTSSpeakerProfile: Codable, Sendable {
+public struct OuteTTSSpeakerProfile: Codable, Sendable {
   var text: String
   var words: [OuteTTSWordData]
   var globalFeatures: OuteTTSAudioFeatures
