@@ -64,6 +64,26 @@ public protocol TTSEngine: Observable {
   func cleanup() async throws
 }
 
+// MARK: - Default Implementations
+
+extension TTSEngine {
+  /// Load the model without progress reporting
+  public func load() async throws {
+    try await load(progressHandler: nil)
+  }
+
+  /// Generate audio with default speed
+  public func generate(text: String) async throws -> AudioResult {
+    try await generate(text: text, speed: 1.0)
+  }
+
+  /// Generate and immediately play audio
+  public func say(_ text: String, speed: Float = 1.0) async throws {
+    let audio = try await generate(text: text, speed: speed)
+    await audio.play()
+  }
+}
+
 // MARK: - Streaming Support
 
 /// Optional streaming support - only engines with real-time streaming capability conform.

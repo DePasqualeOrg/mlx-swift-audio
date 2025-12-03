@@ -84,4 +84,19 @@ public enum AudioResult: Sendable {
         nil
     }
   }
+
+  // MARK: - Playback
+
+  /// Play the audio samples
+  /// - Parameter volumeBoost: Optional volume multiplier (default: 1.25)
+  @MainActor
+  public func play(volumeBoost: Float = TTSConstants.Audio.volumeBoostFactor) async {
+    guard case let .samples(data, sampleRate, _) = self else {
+      Log.audio.warning("Cannot play AudioResult.file directly")
+      return
+    }
+
+    let player = AudioSamplePlayer(sampleRate: sampleRate)
+    await player.play(samples: data, volumeBoost: volumeBoost)
+  }
 }

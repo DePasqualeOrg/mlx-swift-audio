@@ -186,14 +186,6 @@ public final class OrpheusEngine: TTSEngine {
     Log.tts.debug("OrpheusEngine cleaned up")
   }
 
-  // MARK: - Extended API
-
-  /// Generate and immediately play audio
-  public func say(_ text: String) async throws {
-    _ = try await generate(text: text, speed: 1.0)
-    try await play()
-  }
-
   // MARK: - Private Helpers
 
   private func resolveVoice(_ voiceID: String) -> OrpheusVoice? {

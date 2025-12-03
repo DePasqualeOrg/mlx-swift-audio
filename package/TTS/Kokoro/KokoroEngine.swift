@@ -184,12 +184,6 @@ public final class KokoroEngine: TTSEngine {
 
   // MARK: - Extended API
 
-  /// Generate and immediately play audio
-  public func say(_ text: String, speed: Float = 1.0) async throws {
-    _ = try await generate(text: text, speed: speed)
-    try await play()
-  }
-
   /// Generate audio with streaming playback (audio plays as it generates)
   public func generateWithStreaming(text: String, speed: Float = 1.0) async throws -> AudioResult {
     guard isLoaded, let kokoroTTS, let audioPlayer else {

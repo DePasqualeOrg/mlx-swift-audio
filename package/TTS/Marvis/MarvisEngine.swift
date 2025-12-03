@@ -348,12 +348,6 @@ public final class MarvisEngine: TTSEngine, StreamingTTSEngine {
 
   // MARK: - Extended API
 
-  /// Generate and immediately play audio
-  public func say(_ text: String) async throws {
-    _ = try await generate(text: text, speed: 1.0)
-    // Playback is handled by MarvisTTS when playbackEnabled is true
-  }
-
   /// Generate with streaming playback
   public func sayStreaming(_ text: String) async throws {
     for try await _ in generateStreaming(text: text, speed: 1.0) {

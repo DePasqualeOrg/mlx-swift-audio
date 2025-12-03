@@ -188,12 +188,6 @@ public final class OuteTTSEngineWrapper: TTSEngine {
 
   // MARK: - Extended API
 
-  /// Generate and immediately play audio
-  public func say(_ text: String) async throws {
-    _ = try await generate(text: text, speed: 1.0)
-    try await play()
-  }
-
   /// Load a custom speaker profile
   public func loadCustomSpeaker(from path: String) throws {
     customSpeakerPath = path
