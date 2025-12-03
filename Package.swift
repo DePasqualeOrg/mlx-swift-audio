@@ -25,12 +25,13 @@ let package = Package(
                 .product(name: "libespeak-ng", package: "espeak-ng-spm"),
                 .product(name: "espeak-ng-data", package: "espeak-ng-spm"),
             ],
-            path: "mlx_audio_swift/tts/MLXAudio"
+            path: "package",
+            exclude: ["Tests"]
         ),
         .testTarget(
             name: "MLXAudioTests",
             dependencies: ["MLXAudio"],
-            path: "mlx_audio_swift/tts/Tests"
+            path: "package/Tests"
         ),
     ]
 )
