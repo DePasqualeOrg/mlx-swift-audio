@@ -108,25 +108,7 @@ final class AppState {
     statusMessage = "Streaming..."
 
     do {
-      var allSamples: [Float] = []
-      var sampleRate = 0
-      var totalProcessingTime: TimeInterval = 0
-
-      for try await chunk in engineManager.generateStreaming(text: inputText, speed: speed) {
-        if stopRequested { break }
-        allSamples.append(contentsOf: chunk.samples)
-        sampleRate = chunk.sampleRate
-        totalProcessingTime += chunk.processingTime
-        statusMessage = "Streaming... \(allSamples.count) samples"
-      }
-
-      guard !stopRequested else { return }
-
-      lastResult = .samples(
-        data: allSamples,
-        sampleRate: sampleRate,
-        processingTime: totalProcessingTime,
-      )
+      lastResult = try await engineManager.sayStreaming(text: inputText, speed: speed)
 
       if let result = lastResult {
         statusMessage = formatResultStatus(result)

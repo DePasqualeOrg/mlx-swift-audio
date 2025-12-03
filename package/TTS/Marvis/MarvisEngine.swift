@@ -317,20 +317,23 @@ public final class MarvisEngine: TTSEngine, StreamingTTSEngine {
   /// - Parameters:
   ///   - text: The text to synthesize
   ///   - voice: The voice to use
+  @discardableResult
   public func sayStreaming(
     _ text: String,
     voice: MarvisTTS.Voice,
-  ) async throws {
+  ) async throws -> AudioResult {
     guard let audioPlayer else {
       throw TTSError.modelNotLoaded
     }
 
     isPlaying = true
     var allSamples: [Float] = []
+    var totalProcessingTime: TimeInterval = 0
 
     do {
       for try await chunk in generateStreaming(text, voice: voice) {
         allSamples.append(contentsOf: chunk.samples)
+        totalProcessingTime = chunk.processingTime
         audioPlayer.enqueue(samples: chunk.samples)
       }
 
@@ -349,6 +352,12 @@ public final class MarvisEngine: TTSEngine, StreamingTTSEngine {
           Log.audio.error("Failed to save audio file: \(error.localizedDescription)")
         }
       }
+
+      return .samples(
+        data: allSamples,
+        sampleRate: TTSConstants.Audio.marvisSampleRate,
+        processingTime: totalProcessingTime,
+      )
     } catch {
       isPlaying = false
       throw error

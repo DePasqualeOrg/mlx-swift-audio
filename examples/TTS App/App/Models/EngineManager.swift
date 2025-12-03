@@ -160,6 +160,18 @@ final class EngineManager {
     }
   }
 
+  /// Stream and play audio in real time (Kokoro and Marvis)
+  func sayStreaming(text: String, speed: Float) async throws -> AudioResult {
+    switch selectedProvider {
+      case .kokoro:
+        try await kokoroEngine.sayStreaming(text, voice: kokoroVoice, speed: speed)
+      case .marvis:
+        try await marvisEngine.sayStreaming(text, voice: marvisVoice)
+      default:
+        throw TTSError.invalidArgument("Streaming not supported for \(selectedProvider.displayName)")
+    }
+  }
+
   /// Play audio result
   func play(_ audio: AudioResult) async {
     await audio.play()

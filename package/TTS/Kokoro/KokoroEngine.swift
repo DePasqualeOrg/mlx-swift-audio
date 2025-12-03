@@ -252,21 +252,24 @@ public final class KokoroEngine: TTSEngine, StreamingTTSEngine {
   ///   - text: The text to synthesize
   ///   - voice: The voice to use
   ///   - speed: Playback speed multiplier (default: 1.0)
+  @discardableResult
   public func sayStreaming(
     _ text: String,
     voice: KokoroTTS.Voice,
     speed: Float = 1.0,
-  ) async throws {
+  ) async throws -> AudioResult {
     guard let audioPlayer else {
       throw TTSError.modelNotLoaded
     }
 
     isPlaying = true
     var allSamples: [Float] = []
+    var totalProcessingTime: TimeInterval = 0
 
     do {
       for try await chunk in generateStreaming(text, voice: voice, speed: speed) {
         allSamples.append(contentsOf: chunk.samples)
+        totalProcessingTime = chunk.processingTime
         audioPlayer.enqueue(samples: chunk.samples, prebufferSeconds: 0)
       }
 
@@ -285,6 +288,12 @@ public final class KokoroEngine: TTSEngine, StreamingTTSEngine {
           Log.audio.error("Failed to save audio file: \(error.localizedDescription)")
         }
       }
+
+      return .samples(
+        data: allSamples,
+        sampleRate: TTSConstants.Audio.kokoroSampleRate,
+        processingTime: totalProcessingTime,
+      )
     } catch {
       isPlaying = false
       throw error
