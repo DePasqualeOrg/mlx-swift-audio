@@ -35,7 +35,7 @@ class LSTM: Module {
     wxBackward: MLXArray,
     whBackward: MLXArray,
     biasIhBackward: MLXArray? = nil,
-    biasHhBackward: MLXArray? = nil
+    biasHhBackward: MLXArray? = nil,
   ) {
     self.inputSize = inputSize
     self.hiddenSize = hiddenSize
@@ -61,18 +61,17 @@ class LSTM: Module {
   private func forwardDirection(
     _ x: MLXArray,
     hidden: MLXArray? = nil,
-    cell: MLXArray? = nil
+    cell: MLXArray? = nil,
   ) -> (MLXArray, MLXArray) {
     // Pre-compute input projections
-    let xProj: MLXArray
-    if let biasIhForward = biasIhForward, let biasHhForward = biasHhForward {
-      xProj = MLX.addMM(
+    let xProj: MLXArray = if let biasIhForward, let biasHhForward {
+      MLX.addMM(
         biasIhForward + biasHhForward,
         x,
-        wxForward.transposed()
+        wxForward.transposed(),
       )
     } else {
-      xProj = MLX.matmul(x, wxForward.transposed())
+      MLX.matmul(x, wxForward.transposed())
     }
 
     var allHidden: [MLXArray] = []
@@ -110,17 +109,16 @@ class LSTM: Module {
   private func backwardDirection(
     _ x: MLXArray,
     hidden: MLXArray? = nil,
-    cell: MLXArray? = nil
+    cell: MLXArray? = nil,
   ) -> (MLXArray, MLXArray) {
-    let xProj: MLXArray
-    if let biasIhBackward = biasIhBackward, let biasHhBackward = biasHhBackward {
-      xProj = MLX.addMM(
+    let xProj: MLXArray = if let biasIhBackward, let biasHhBackward {
+      MLX.addMM(
         biasIhBackward + biasHhBackward,
         x,
-        wxBackward.transposed()
+        wxBackward.transposed(),
       )
     } else {
-      xProj = MLX.matmul(x, wxBackward.transposed())
+      MLX.matmul(x, wxBackward.transposed())
     }
 
     var allHidden: [MLXArray] = []
@@ -160,25 +158,24 @@ class LSTM: Module {
     hiddenForward: MLXArray? = nil,
     cellForward: MLXArray? = nil,
     hiddenBackward: MLXArray? = nil,
-    cellBackward: MLXArray? = nil
+    cellBackward: MLXArray? = nil,
   ) -> (MLXArray, ((MLXArray, MLXArray), (MLXArray, MLXArray))) {
-    let input: MLXArray
-    if x.ndim == 2 {
-      input = x.expandedDimensions(axis: 0) // (1, seq_len, input_size)
+    let input: MLXArray = if x.ndim == 2 {
+      x.expandedDimensions(axis: 0) // (1, seq_len, input_size)
     } else {
-      input = x
+      x
     }
 
     let (forwardHidden, forwardCell) = forwardDirection(
       input,
       hidden: hiddenForward,
-      cell: cellForward
+      cell: cellForward,
     )
 
     let (backwardHidden, backwardCell) = backwardDirection(
       input,
       hidden: hiddenBackward,
-      cell: cellBackward
+      cell: cellBackward,
     )
 
     let output = MLX.concatenated([forwardHidden, backwardHidden], axis: -1)
@@ -187,8 +184,8 @@ class LSTM: Module {
       output,
       (
         (forwardHidden[0..., -1, 0...], forwardCell[0..., -1, 0...]),
-        (backwardHidden[0..., 0, 0...], backwardCell[0..., 0, 0...])
-      )
+        (backwardHidden[0..., 0, 0...], backwardCell[0..., 0, 0...]),
+      ),
     )
   }
 }

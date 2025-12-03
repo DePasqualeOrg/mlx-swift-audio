@@ -34,22 +34,20 @@ class AlbertEmbeddings {
   func callAsFunction(
     _ inputIds: MLXArray,
     tokenTypeIds: MLXArray? = nil,
-    positionIds: MLXArray? = nil
+    positionIds: MLXArray? = nil,
   ) -> MLXArray {
     let seqLength = inputIds.shape[1]
 
-    let positionIdsUsed: MLXArray
-    if let positionIds = positionIds {
-      positionIdsUsed = positionIds
+    let positionIdsUsed: MLXArray = if let positionIds {
+      positionIds
     } else {
-      positionIdsUsed = MLX.expandedDimensions(MLXArray(0 ..< seqLength), axes: [0])
+      MLX.expandedDimensions(MLXArray(0 ..< seqLength), axes: [0])
     }
 
-    let tokenTypeIdsUsed: MLXArray
-    if let tokenTypeIds = tokenTypeIds {
-      tokenTypeIdsUsed = tokenTypeIds
+    let tokenTypeIdsUsed: MLXArray = if let tokenTypeIds {
+      tokenTypeIds
     } else {
-      tokenTypeIdsUsed = MLXArray.zeros(like: inputIds)
+      MLXArray.zeros(like: inputIds)
     }
 
     let wordsEmbeddings = wordEmbeddings(inputIds)

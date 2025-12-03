@@ -10,7 +10,7 @@ func interpolate(
   size: [Int]? = nil,
   scaleFactor: [Float]? = nil,
   mode: String = "nearest",
-  alignCorners: Bool? = nil
+  alignCorners: Bool? = nil,
 ) -> MLXArray {
   let ndim = input.ndim
   if ndim < 3 {
@@ -20,15 +20,15 @@ func interpolate(
   let spatialDims = ndim - 2
 
   // Handle size and scaleFactor
-  if size != nil && scaleFactor != nil {
+  if size != nil, scaleFactor != nil {
     fatalError("Only one of size or scaleFactor should be defined")
-  } else if size == nil && scaleFactor == nil {
+  } else if size == nil, scaleFactor == nil {
     fatalError("One of size or scaleFactor must be defined")
   }
 
   // Calculate output size from scale factor if needed
   var outputSize: [Int] = []
-  if let scaleFactor = scaleFactor {
+  if let scaleFactor {
     let factors = scaleFactor.count == 1 ? Array(repeating: scaleFactor[0], count: spatialDims) : scaleFactor
 
     for i in 0 ..< spatialDims {
@@ -36,7 +36,7 @@ func interpolate(
       let currSize = max(1, Int(ceil(Float(input.shape[i + 2]) * factors[i])))
       outputSize.append(currSize)
     }
-  } else if let size = size {
+  } else if let size {
     outputSize = size.count == 1 ? Array(repeating: size[0], count: spatialDims) : size
   }
 
@@ -52,7 +52,7 @@ func interpolate1d(
   input: MLXArray,
   size: Int,
   mode: String = "linear",
-  alignCorners: Bool? = nil
+  alignCorners: Bool? = nil,
 ) -> MLXArray {
   let shape = input.shape
   let batchSize = shape[0]
@@ -76,7 +76,7 @@ func interpolate1d(
 
   // Linear interpolation
   var x: MLXArray
-  if alignCorners == true && outputSize > 1 {
+  if alignCorners == true, outputSize > 1 {
     x = MLXArray(0 ..< outputSize).asType(.float32) * (Float(inputWidth - 1) / Float(outputSize - 1))
   } else {
     if outputSize == 1 {

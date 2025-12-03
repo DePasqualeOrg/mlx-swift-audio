@@ -14,7 +14,7 @@ class AdaINResBlock1 {
   var alpha2: [MLXArray] = []
 
   private func getPadding(kernelSize: Int, dilation: Int = 1) -> Int {
-    return Int((kernelSize * dilation - dilation) / 2)
+    Int((kernelSize * dilation - dilation) / 2)
   }
 
   init(
@@ -23,7 +23,7 @@ class AdaINResBlock1 {
     channels: Int,
     kernelSize: Int = 3,
     dilation: [Int] = [1, 3, 5],
-    styleDim: Int = 64
+    styleDim: Int = 64,
   ) {
     for i in 0 ..< 3 {
       let dilationValue = dilation[i]
@@ -33,7 +33,7 @@ class AdaINResBlock1 {
         bias: weights[weightPrefixKey + ".convs1.\(i).bias"]!,
         stride: 1,
         padding: getPadding(kernelSize: kernelSize, dilation: dilationValue),
-        dilation: dilationValue
+        dilation: dilationValue,
       )
       convs1.append(conv)
     }
@@ -45,7 +45,7 @@ class AdaINResBlock1 {
         bias: weights[weightPrefixKey + ".convs2.\(i).bias"]!,
         stride: 1,
         padding: getPadding(kernelSize: kernelSize, dilation: 1),
-        dilation: 1
+        dilation: 1,
       )
       convs2.append(conv)
     }
@@ -55,14 +55,14 @@ class AdaINResBlock1 {
         styleDim: styleDim,
         numFeatures: channels,
         fcWeight: weights[weightPrefixKey + ".adain1.\(i).fc.weight"]!,
-        fcBias: weights[weightPrefixKey + ".adain1.\(i).fc.bias"]!
+        fcBias: weights[weightPrefixKey + ".adain1.\(i).fc.bias"]!,
       ))
 
       adain2.append(AdaIN1d(
         styleDim: styleDim,
         numFeatures: channels,
         fcWeight: weights[weightPrefixKey + ".adain2.\(i).fc.weight"]!,
-        fcBias: weights[weightPrefixKey + ".adain2.\(i).fc.bias"]!
+        fcBias: weights[weightPrefixKey + ".adain2.\(i).fc.bias"]!,
       ))
     }
 

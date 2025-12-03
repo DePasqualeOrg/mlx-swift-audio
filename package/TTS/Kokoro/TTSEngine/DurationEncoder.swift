@@ -26,7 +26,7 @@ class DurationEncoder {
              wxBackward: weights["predictor.text_encoder.lstms.\(lstmIdx).weight_ih_l0_reverse"]!,
              whBackward: weights["predictor.text_encoder.lstms.\(lstmIdx).weight_hh_l0_reverse"]!,
              biasIhBackward: weights["predictor.text_encoder.lstms.\(lstmIdx).bias_ih_l0_reverse"]!,
-             biasHhBackward: weights["predictor.text_encoder.lstms.\(lstmIdx).bias_hh_l0_reverse"]!)
+             biasHhBackward: weights["predictor.text_encoder.lstms.\(lstmIdx).bias_hh_l0_reverse"]!),
       )
 
       // AdaLayerNorm layer

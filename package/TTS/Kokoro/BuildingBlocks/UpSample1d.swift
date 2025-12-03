@@ -13,15 +13,15 @@ class UpSample1d {
     self.layerType = layerType
     interpolate = Upsample(
       scaleFactor: 2.0,
-      mode: .nearest
+      mode: .nearest,
     )
   }
 
   func callAsFunction(_ x: MLXArray) -> MLXArray {
     if layerType == "none" {
-      return x
+      x
     } else {
-      return interpolate(x)
+      interpolate(x)
     }
   }
 }

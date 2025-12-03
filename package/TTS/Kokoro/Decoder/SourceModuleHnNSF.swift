@@ -19,7 +19,7 @@ class SourceModuleHnNSF: Module {
     harmonicNum: Int = 0,
     sineAmp: Float = 0.1,
     addNoiseStd: Float = 0.003,
-    voicedThreshold: Float = 0
+    voicedThreshold: Float = 0,
   ) {
     self.sineAmp = sineAmp
     noiseStd = addNoiseStd
@@ -31,13 +31,13 @@ class SourceModuleHnNSF: Module {
       harmonicNum: harmonicNum,
       sineAmp: sineAmp,
       noiseStd: addNoiseStd,
-      voicedThreshold: voicedThreshold
+      voicedThreshold: voicedThreshold,
     )
 
     // To merge source harmonics into a single excitation
     lLinear = Linear(
       weight: weights["decoder.generator.m_source.l_linear.weight"]!,
-      bias: weights["decoder.generator.m_source.l_linear.bias"]!
+      bias: weights["decoder.generator.m_source.l_linear.bias"]!,
     )
 
     super.init()

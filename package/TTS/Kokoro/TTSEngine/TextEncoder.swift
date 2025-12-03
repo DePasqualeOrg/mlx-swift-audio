@@ -21,11 +21,11 @@ class TextEncoder {
           weightG: weights["text_encoder.cnn.\(i).0.weight_g"]!,
           weightV: weights["text_encoder.cnn.\(i).0.weight_v"]!,
           bias: weights["text_encoder.cnn.\(i).0.bias"]!,
-          padding: padding
+          padding: padding,
         ),
         LayerNormInference(
           weight: weights["text_encoder.cnn.\(i).1.gamma"]!,
-          bias: weights["text_encoder.cnn.\(i).1.beta"]!
+          bias: weights["text_encoder.cnn.\(i).1.beta"]!,
         ),
         actv,
         Dropout(p: 0.2),
@@ -43,49 +43,49 @@ class TextEncoder {
       wxBackward: weights["text_encoder.lstm.weight_ih_l0_reverse"]!,
       whBackward: weights["text_encoder.lstm.weight_hh_l0_reverse"]!,
       biasIhBackward: weights["text_encoder.lstm.bias_ih_l0_reverse"]!,
-      biasHhBackward: weights["text_encoder.lstm.bias_hh_l0_reverse"]!
+      biasHhBackward: weights["text_encoder.lstm.bias_hh_l0_reverse"]!,
     )
   }
 
-    public func callAsFunction(_ x: MLXArray, inputLengths _: MLXArray, m: MLXArray) -> MLXArray {
-        var features = embedding(x)
-        features = features.transposed(0, 2, 1)
-        let mask = m.expandedDimensions(axis: 1)
+  func callAsFunction(_ x: MLXArray, inputLengths _: MLXArray, m: MLXArray) -> MLXArray {
+    var features = embedding(x)
+    features = features.transposed(0, 2, 1)
+    let mask = m.expandedDimensions(axis: 1)
+    features = MLX.where(mask, 0.0, features)
+
+    for convBlock in cnn {
+      for layer in convBlock {
+        if layer is ConvWeighted || layer is LayerNormInference {
+          features = MLX.swappedAxes(features, 2, 1)
+          if let conv = layer as? ConvWeighted {
+            features = conv(features, conv: MLX.conv1d)
+          } else if let norm = layer as? LayerNormInference {
+            features = norm(features)
+          }
+          features = MLX.swappedAxes(features, 2, 1)
+        } else if let activation = layer as? LeakyReLU {
+          features = activation(features)
+        } else if let dropout = layer as? Dropout {
+          features = dropout(features)
+        } else {
+          fatalError("Unsupported layer type")
+        }
         features = MLX.where(mask, 0.0, features)
-
-        for convBlock in cnn {
-            for layer in convBlock {
-                if layer is ConvWeighted || layer is LayerNormInference {
-                    features = MLX.swappedAxes(features, 2, 1)
-                    if let conv = layer as? ConvWeighted {
-                        features = conv(features, conv: MLX.conv1d)
-                    } else if let norm = layer as? LayerNormInference {
-                        features = norm(features)
-                    }
-                    features = MLX.swappedAxes(features, 2, 1)
-                } else if let activation = layer as? LeakyReLU {
-                    features = activation(features)
-                } else if let dropout = layer as? Dropout {
-                    features = dropout(features)
-                } else {
-                    fatalError("Unsupported layer type")
-                }
-                features = MLX.where(mask, 0.0, features)
-            }
-        }
-
-        features = MLX.swappedAxes(features, 2, 1)
-        let (lstmOutput, _) = lstm(features)
-        features = MLX.swappedAxes(lstmOutput, 2, 1)
-
-        // Pad output to match mask size
-        let maskLen = m.shape[m.shape.count - 1]
-        if features.shape[features.shape.count - 1] < maskLen {
-            let featuresPad = MLXArray.zeros([features.shape[0], features.shape[1], maskLen])
-            featuresPad[0..., 0..., 0..<features.shape[features.shape.count - 1]] = features
-            features = featuresPad
-        }
-
-        return MLX.where(mask, 0.0, features)
+      }
     }
+
+    features = MLX.swappedAxes(features, 2, 1)
+    let (lstmOutput, _) = lstm(features)
+    features = MLX.swappedAxes(lstmOutput, 2, 1)
+
+    // Pad output to match mask size
+    let maskLen = m.shape[m.shape.count - 1]
+    if features.shape[features.shape.count - 1] < maskLen {
+      let featuresPad = MLXArray.zeros([features.shape[0], features.shape[1], maskLen])
+      featuresPad[0..., 0..., 0 ..< features.shape[features.shape.count - 1]] = features
+      features = featuresPad
+    }
+
+    return MLX.where(mask, 0.0, features)
+  }
 }

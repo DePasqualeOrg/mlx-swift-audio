@@ -21,26 +21,26 @@ final class ESpeakNGEngine {
 
     var errorDescription: String? {
       switch self {
-      case .dataBundleNotFound:
-        return "eSpeak-NG data bundle not found"
-      case .couldNotInitialize:
-        return "Could not initialize eSpeak-NG engine"
-      case .languageNotFound:
-        return "Language not found in eSpeak-NG"
-      case .internalError:
-        return "Internal eSpeak-NG error"
-      case .languageNotSet:
-        return "Language not set for eSpeak-NG engine"
-      case .couldNotPhonemize:
-        return "Could not phonemize text"
-      case .bundleInstallFailed(let message):
-        return "eSpeak-NG bundle installation failed: \(message)"
+        case .dataBundleNotFound:
+          "eSpeak-NG data bundle not found"
+        case .couldNotInitialize:
+          "Could not initialize eSpeak-NG engine"
+        case .languageNotFound:
+          "Language not found in eSpeak-NG"
+        case .internalError:
+          "Internal eSpeak-NG error"
+        case .languageNotSet:
+          "Language not set for eSpeak-NG engine"
+        case .couldNotPhonemize:
+          "Could not phonemize text"
+        case let .bundleInstallFailed(message):
+          "eSpeak-NG bundle installation failed: \(message)"
       }
     }
   }
 
   // Available languages
-  public enum LanguageDialect: String, CaseIterable, Sendable {
+  enum LanguageDialect: String, CaseIterable, Sendable {
     case none = ""
     case enUS = "en-us"
     case enGB = "en-gb"
@@ -164,7 +164,7 @@ final class ESpeakNGEngine {
     #endif
   }
 
-  public func languageForVoice(voice: TTSVoice) throws -> LanguageDialect {
+  func languageForVoice(voice: TTSVoice) throws -> LanguageDialect {
     guard let language = PhonemeMapping.voice2Language[voice] else {
       throw ESpeakNGEngineError.languageNotFound
     }
@@ -307,7 +307,7 @@ final class ESpeakNGEngine {
       .zmYunjian: .znCN,
       .zmYunxi: .znCN,
       .zmYunxia: .znCN,
-      .zmYunyang: .znCN
+      .zmYunyang: .znCN,
     ]
   }
 }

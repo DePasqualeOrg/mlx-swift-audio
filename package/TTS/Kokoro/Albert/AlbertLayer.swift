@@ -43,7 +43,7 @@ class AlbertLayer {
 
   func callAsFunction(
     _ hiddenStates: MLXArray,
-    attentionMask: MLXArray? = nil
+    attentionMask: MLXArray? = nil,
   ) -> MLXArray {
     let attentionOutput = attention(hiddenStates, attentionMask: attentionMask)
     let ffnOutput = ffChunk(attentionOutput)

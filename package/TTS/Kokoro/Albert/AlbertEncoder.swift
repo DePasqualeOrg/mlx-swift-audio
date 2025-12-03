@@ -24,7 +24,7 @@ class AlbertEncoder {
 
   func callAsFunction(
     _ hiddenStates: MLXArray,
-    attentionMask: MLXArray? = nil
+    attentionMask: MLXArray? = nil,
   ) -> MLXArray {
     var output = embeddingHiddenMappingIn(hiddenStates)
 

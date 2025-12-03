@@ -27,10 +27,10 @@ class LexiconLoader {
 
     var errorDescription: String? {
       switch self {
-      case .downloadFailed(let message):
-        return "Lexicon download failed: \(message)"
-      case .invalidJSON(let message):
-        return "Invalid lexicon JSON: \(message)"
+        case let .downloadFailed(message):
+          "Lexicon download failed: \(message)"
+        case let .invalidJSON(message):
+          "Invalid lexicon JSON: \(message)"
       }
     }
   }
@@ -53,7 +53,8 @@ class LexiconLoader {
     let (data, response) = try await URLSession.shared.data(from: remoteURL)
 
     guard let httpResponse = response as? HTTPURLResponse,
-          httpResponse.statusCode == 200 else {
+          httpResponse.statusCode == 200
+    else {
       throw LexiconLoaderError.downloadFailed("Failed to download \(filename).json")
     }
 
@@ -117,7 +118,8 @@ class LexiconLoader {
       if let stringValue = value as? String {
         processedLexicon[key] = stringValue
       } else if let dictValue = value as? [String: Any],
-                let defaultValue = dictValue["DEFAULT"] as? String {
+                let defaultValue = dictValue["DEFAULT"] as? String
+      {
         processedLexicon[key] = defaultValue
       }
     }

@@ -9,7 +9,7 @@ final class PhonemeTokenizer {
   // Use ESpeakNGEngine to phonemize the text first before calling this method
   // Returns tokenized array that can then be passed to TTS system
   static func tokenize(phonemizedText text: String) -> [Int] {
-    return text
+    text
       .map { Vocab.table[String($0)] }
       .filter { $0 != nil }
       .map { $0! }

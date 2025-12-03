@@ -23,7 +23,7 @@ class _InstanceNorm {
     eps: Float = 1e-5,
     momentum: Float = 0.1,
     affine: Bool = false,
-    trackRunningStats: Bool = false
+    trackRunningStats: Bool = false,
   ) {
     self.numFeatures = numFeatures
     self.eps = eps
@@ -69,14 +69,14 @@ class _InstanceNorm {
       mean = MLX.mean(input, axes: reduceDims, keepDims: true)
       variance = MLX.variance(input, axes: reduceDims, keepDims: true)
 
-      if trackRunningStats && training, let runningMean = runningMean, let runningVar = runningVar {
+      if trackRunningStats, training, let runningMean, let runningVar {
         let overallMean = MLX.mean(mean, axes: [0])
         let overallVar = MLX.mean(variance, axes: [0])
 
         self.runningMean = (1 - momentum) * runningMean + momentum * overallMean
         self.runningVar = (1 - momentum) * runningVar + momentum * overallVar
       }
-    } else if let runningMean = runningMean, let runningVar = runningVar {
+    } else if let runningMean, let runningVar {
       var meanShape = Array(repeating: 1, count: input.ndim)
       meanShape[featureDim] = numFeatures
       let varShape = meanShape
@@ -91,7 +91,7 @@ class _InstanceNorm {
     let xNorm = (input - mean) / MLX.sqrt(variance + eps)
 
     // Apply bias if needed
-    if affine, let weight = weight, let bias = bias {
+    if affine, let weight, let bias {
       var weightShape = Array(repeating: 1, count: input.ndim)
       weightShape[featureDim] = numFeatures
       let biasShape = weightShape
@@ -127,7 +127,7 @@ class _InstanceNorm {
 
 class InstanceNorm1d: _InstanceNorm {
   override func getNoBatchDim() -> Int {
-    return 2
+    2
   }
 
   override func checkInputDim(_ input: MLXArray) {

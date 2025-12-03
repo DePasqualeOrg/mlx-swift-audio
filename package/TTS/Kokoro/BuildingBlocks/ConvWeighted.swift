@@ -9,17 +9,16 @@ func computeNorm(
   x: MLXArray,
   p: Int,
   dim: [Int]? = nil,
-  keepdim: Bool = false
+  keepdim: Bool = false,
 ) -> MLXArray {
   guard p == 1 || p == 2 else {
     fatalError("Only p-norms with p of 1 or 2 are supported")
   }
 
-  let dimensions: [Int]
-  if let dim = dim {
-    dimensions = dim
+  let dimensions: [Int] = if let dim {
+    dim
   } else {
-    dimensions = Array(0 ..< x.ndim)
+    Array(0 ..< x.ndim)
   }
 
   if p == 1 {
@@ -34,13 +33,13 @@ func computeNorm(
 func weightNorm(
   weightV: MLXArray,
   weightG: MLXArray,
-  dim: Int? = nil
+  dim: Int? = nil,
 ) -> MLXArray {
   let rank = weightV.shape.count
 
   var axes: [Int]
 
-  if let dim = dim {
+  if let dim {
     var adjustedDim = dim
     if dim < 0 {
       adjustedDim += rank
@@ -78,7 +77,7 @@ class ConvWeighted: Module {
     stride: Int = 1,
     padding: Int = 1,
     dilation: Int = 1,
-    groups: Int = 1
+    groups: Int = 1,
   ) {
     self.stride = stride
     self.padding = padding
@@ -93,7 +92,7 @@ class ConvWeighted: Module {
     super.init()
   }
 
-  public func callAsFunction(_ x: MLXArray, conv: (MLXArray, MLXArray, Int, Int, Int, Int, StreamOrDevice) -> MLXArray) -> MLXArray {
+  func callAsFunction(_ x: MLXArray, conv: (MLXArray, MLXArray, Int, Int, Int, Int, StreamOrDevice) -> MLXArray) -> MLXArray {
     let weight = weightNorm(weightV: weightV, weightG: weightG, dim: 0)
     bias = bias?.reshaped([1, 1, -1])
 
@@ -105,10 +104,10 @@ class ConvWeighted: Module {
         padding,
         dilation,
         groups,
-        .default
+        .default,
       )
 
-      if let bias = bias {
+      if let bias {
         return result + bias
       }
       return result

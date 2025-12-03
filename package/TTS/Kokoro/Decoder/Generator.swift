@@ -40,7 +40,7 @@ class Generator {
       samplingRate: 24000,
       upsampleScale: upsampleScaleNum.item(),
       harmonicNum: 8,
-      voicedThreshold: 10
+      voicedThreshold: 10,
     )
 
     f0Upsample = Upsample(scaleFactor: .float(Float(upsampleScaleNumVal)))
@@ -56,8 +56,8 @@ class Generator {
           weightV: weights["decoder.generator.ups.\(i).weight_v"]!,
           bias: weights["decoder.generator.ups.\(i).bias"]!,
           stride: u,
-          padding: (k - u) / 2
-        )
+          padding: (k - u) / 2,
+        ),
       )
     }
 
@@ -72,8 +72,8 @@ class Generator {
             channels: ch,
             kernelSize: k,
             dilation: d,
-            styleDim: styleDim
-          )
+            styleDim: styleDim,
+          ),
         )
       }
 
@@ -88,8 +88,8 @@ class Generator {
             stride: strideF0,
             padding: (strideF0 + 1) / 2,
             weight: weights["decoder.generator.noise_convs.\(i).weight"]!,
-            bias: weights["decoder.generator.noise_convs.\(i).bias"]!
-          )
+            bias: weights["decoder.generator.noise_convs.\(i).bias"]!,
+          ),
         )
 
         noiseRes.append(
@@ -99,8 +99,8 @@ class Generator {
             channels: cCur,
             kernelSize: 7,
             dilation: [1, 3, 5],
-            styleDim: styleDim
-          )
+            styleDim: styleDim,
+          ),
         )
       } else {
         noiseConvs.append(
@@ -109,8 +109,8 @@ class Generator {
             outputChannels: cCur,
             kernelSize: 1,
             weight: weights["decoder.generator.noise_convs.\(i).weight"]!,
-            bias: weights["decoder.generator.noise_convs.\(i).bias"]!
-          )
+            bias: weights["decoder.generator.noise_convs.\(i).bias"]!,
+          ),
         )
         noiseRes.append(
           AdaINResBlock1(
@@ -119,8 +119,8 @@ class Generator {
             channels: cCur,
             kernelSize: 11,
             dilation: [1, 3, 5],
-            styleDim: styleDim
-          )
+            styleDim: styleDim,
+          ),
         )
       }
     }
@@ -132,7 +132,7 @@ class Generator {
       weightV: weights["decoder.generator.conv_post.weight_v"]!,
       bias: weights["decoder.generator.conv_post.bias"]!,
       stride: 1,
-      padding: 3
+      padding: 3,
     )
 
     reflectionPad = ReflectionPad1d(padding: (1, 0))
@@ -140,7 +140,7 @@ class Generator {
     stft = MLXSTFT(
       filterLength: genIstftNFft,
       hopLength: genIstftHopSize,
-      winLength: genIstftNFft
+      winLength: genIstftNFft,
     )
   }
 
@@ -166,11 +166,11 @@ class Generator {
       xSource = noiseRes[i](xSource, s)
 
       newX = MLX.swappedAxes(newX, 2, 1)
-    let upsi = ups[i]
-        newX = upsi.callAsFunction(newX, conv: { a, b, c, d, e, f, g in
-             MLX.convTransposed1d(a, b, stride: c, padding: d, dilation: e, outputPadding: 0, groups: f, stream: g)
-        })
-        newX = MLX.swappedAxes(newX, 2, 1)
+      let upsi = ups[i]
+      newX = upsi.callAsFunction(newX, conv: { a, b, c, d, e, f, g in
+        MLX.convTransposed1d(a, b, stride: c, padding: d, dilation: e, outputPadding: 0, groups: f, stream: g)
+      })
+      newX = MLX.swappedAxes(newX, 2, 1)
 
       if i == numUpsamples - 1 {
         newX = reflectionPad(newX)

@@ -43,24 +43,24 @@ func unwrap(p: MLXArray) -> MLXArray {
 }
 
 func getWindow(window: Any, winLen: Int, nFft: Int) -> MLXArray {
-    var w: MLXArray
-    if let windowStr = window as? String {
-        if windowStr.lowercased() == "hann" {
-            w = hanning(length: winLen + 1)[0 ..< winLen]
-        } else {
-            fatalError("Only hanning is supported for window, not \(windowStr)")
-        }
-    } else if let windowArray = window as? MLXArray {
-        w = windowArray
+  var w: MLXArray
+  if let windowStr = window as? String {
+    if windowStr.lowercased() == "hann" {
+      w = hanning(length: winLen + 1)[0 ..< winLen]
     } else {
-        fatalError("Window must be a string or MLXArray")
+      fatalError("Only hanning is supported for window, not \(windowStr)")
     }
+  } else if let windowArray = window as? MLXArray {
+    w = windowArray
+  } else {
+    fatalError("Window must be a string or MLXArray")
+  }
 
-    if w.shape[0] < nFft {
-        let padSize = nFft - w.shape[0]
-        w = MLX.concatenated([w, MLXArray.zeros([padSize])], axis: 0)
-    }
-    return w
+  if w.shape[0] < nFft {
+    let padSize = nFft - w.shape[0]
+    w = MLX.concatenated([w, MLXArray.zeros([padSize])], axis: 0)
+  }
+  return w
 }
 
 func mlxStft(
@@ -70,7 +70,7 @@ func mlxStft(
   winLength: Int? = nil,
   window: Any = "hann",
   center: Bool = true,
-  padMode: String = "reflect"
+  padMode: String = "reflect",
 ) -> MLXArray {
   let hopLen = hopLength ?? nFft / 4
   let winLen = winLength ?? nFft
@@ -109,13 +109,12 @@ func mlxStft(
   return spec.transposed(1, 0)
 }
 
-
 func mlxIstft(
   x: MLXArray,
   hopLength: Int? = nil,
   winLength: Int? = nil,
   window: Any = "hann",
-  center: Bool = true
+  center: Bool = true,
 ) -> MLXArray {
   let winLen = winLength ?? ((x.shape[1] - 1) * 2)
   let hopLen = hopLength ?? (winLen / 4)
@@ -131,7 +130,7 @@ func mlxIstft(
 
   // Compute frame offsets and indices for overlap-add
   let frameOffsets = MLXArray(Array(stride(from: 0, to: numFrames * hopLen, by: hopLen)))
-  let winIndices = MLXArray(Array(0..<winLen))
+  let winIndices = MLXArray(Array(0 ..< winLen))
 
   // Create indices matrix: [numFrames, winLen] where each row is frameOffset + [0, 1, ..., winLen-1]
   let indices = frameOffsets.expandedDimensions(axis: 1) + winIndices.expandedDimensions(axis: 0)
@@ -179,14 +178,14 @@ class MLXSTFT {
   func transform(inputData: MLXArray) -> (MLXArray, MLXArray) {
     var audioArray = inputData
     if audioArray.ndim == 1 {
-        audioArray = audioArray.expandedDimensions(axis: 0)
+      audioArray = audioArray.expandedDimensions(axis: 0)
     }
 
     var magnitudes: [MLXArray] = []
     var phases: [MLXArray] = []
 
     // Process sequentially - MLX handles GPU parallelism internally
-    for batchIdx in 0..<audioArray.shape[0] {
+    for batchIdx in 0 ..< audioArray.shape[0] {
       let stft = mlxStft(
         x: audioArray[batchIdx],
         nFft: filterLength,
@@ -194,7 +193,7 @@ class MLXSTFT {
         winLength: winLength,
         window: window,
         center: true,
-        padMode: "reflect"
+        padMode: "reflect",
       )
       magnitudes.append(MLX.abs(stft))
       phases.append(MLX.atan2(stft.imaginaryPart(), stft.realPart()))
@@ -228,7 +227,7 @@ class MLXSTFT {
         hopLength: hopLength,
         winLength: winLength,
         window: window,
-        center: true
+        center: true,
       )
       audio.eval()
 //      fftTimer.stop()

@@ -7,11 +7,11 @@ import MLXFast
 import MLXNN
 
 class LayerNormInference: Module {
-  public let eps: Float
-  public let weight: MLXArray?
-  public let bias: MLXArray?
+  let eps: Float
+  let weight: MLXArray?
+  let bias: MLXArray?
 
-  public init(weight: MLXArray, bias: MLXArray?, eps: Float = 1e-5) {
+  init(weight: MLXArray, bias: MLXArray?, eps: Float = 1e-5) {
     self.weight = weight
     self.bias = bias
     self.eps = eps

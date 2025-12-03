@@ -18,7 +18,7 @@ class AlbertLayerGroup {
 
   func callAsFunction(
     _ hiddenStates: MLXArray,
-    attentionMask: MLXArray? = nil
+    attentionMask: MLXArray? = nil,
   ) -> MLXArray {
     var output = hiddenStates
     for layer in albertLayers {

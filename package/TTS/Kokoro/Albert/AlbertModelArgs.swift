@@ -37,7 +37,7 @@ struct AlbertModelArgs {
     initializerRange: Float = 0.02,
     layerNormEps: Float = 1e-12,
     vocabSize: Int = 178,
-    dropout: Float = 0.1
+    dropout: Float = 0.1,
   ) {
     self.numHiddenLayers = numHiddenLayers
     self.numAttentionHeads = numAttentionHeads

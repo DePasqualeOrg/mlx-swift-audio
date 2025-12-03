@@ -26,7 +26,7 @@ class AdainResBlk1d {
     dimOut: Int,
     styleDim: Int = 64,
     actv: LeakyReLU = LeakyReLU(negativeSlope: 0.2),
-    upsample: String = "none"
+    upsample: String = "none",
   ) {
     self.actv = actv
     self.dimIn = dimIn
@@ -43,7 +43,7 @@ class AdainResBlk1d {
         bias: weights[weightKeyPrefix + ".pool.bias"]!,
         stride: 2,
         padding: 1,
-        groups: dimIn
+        groups: dimIn,
       )
     }
 
@@ -56,7 +56,7 @@ class AdainResBlk1d {
       weightV: weights[weightKeyPrefix + ".conv1.weight_v"]!,
       bias: weights[weightKeyPrefix + ".conv1.bias"]!,
       stride: 1,
-      padding: 1
+      padding: 1,
     )
 
     conv2 = ConvWeighted(
@@ -64,21 +64,21 @@ class AdainResBlk1d {
       weightV: weights[weightKeyPrefix + ".conv2.weight_v"]!,
       bias: weights[weightKeyPrefix + ".conv2.bias"]!,
       stride: 1,
-      padding: 1
+      padding: 1,
     )
 
     norm1 = AdaIN1d(
       styleDim: styleDim,
       numFeatures: dimIn,
       fcWeight: weights[weightKeyPrefix + ".norm1.fc.weight"]!,
-      fcBias: weights[weightKeyPrefix + ".norm1.fc.bias"]!
+      fcBias: weights[weightKeyPrefix + ".norm1.fc.bias"]!,
     )
 
     norm2 = AdaIN1d(
       styleDim: styleDim,
       numFeatures: dimOut,
       fcWeight: weights[weightKeyPrefix + ".norm2.fc.weight"]!,
-      fcBias: weights[weightKeyPrefix + ".norm2.fc.bias"]!
+      fcBias: weights[weightKeyPrefix + ".norm2.fc.bias"]!,
     )
 
     if learned_sc {
@@ -87,7 +87,7 @@ class AdainResBlk1d {
         weightV: weights[weightKeyPrefix + ".conv1x1.weight_v"]!,
         bias: nil,
         stride: 1,
-        padding: 0
+        padding: 0,
       )
     }
   }
@@ -97,7 +97,7 @@ class AdainResBlk1d {
     x = upsample(x)
     x = MLX.swappedAxes(x, 2, 1)
 
-    if let conv1x1 = conv1x1 {
+    if let conv1x1 {
       x = MLX.swappedAxes(x, 2, 1)
       x = conv1x1(x, conv: MLX.conv1d)
       x = MLX.swappedAxes(x, 2, 1)
@@ -115,9 +115,9 @@ class AdainResBlk1d {
       if let idPool = pool as? Identity {
         x = idPool(x)
       } else if let convPool = pool as? ConvWeighted {
-          x = convPool.callAsFunction(x, conv: { a, b, c, d, e, f, g in
-               MLX.convTransposed1d(a, b, stride: c, padding: d, dilation: e, outputPadding: 0,groups: f, stream: g) // Ignore the extra parameter `h`
-          })
+        x = convPool.callAsFunction(x, conv: { a, b, c, d, e, f, g in
+          MLX.convTransposed1d(a, b, stride: c, padding: d, dilation: e, outputPadding: 0, groups: f, stream: g) // Ignore the extra parameter `h`
+        })
       }
       x = MLX.padded(x, widths: [IntOrPair([0, 0]), IntOrPair([1, 0]), IntOrPair([0, 0])])
     }

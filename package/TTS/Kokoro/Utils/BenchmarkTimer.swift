@@ -15,7 +15,7 @@ actor Timing {
   init(id: String, parent: Timing?) {
     self.id = id
     self.parent = parent
-    self.start = DispatchTime.now().uptimeNanoseconds
+    start = DispatchTime.now().uptimeNanoseconds
   }
 
   func addChild(_ child: Timing) {
@@ -34,9 +34,6 @@ actor Timing {
 
   func log(spaces: Int = 0) async {
     guard finish != nil else { return }
-
-    let spaceString = String(repeating: " ", count: spaces)
-    Log.perf.debug("\(spaceString)\(self.id): \(self.deltaInSec) sec")
     for childTask in childTasks {
       await childTask.log(spaces: spaces + 2)
     }

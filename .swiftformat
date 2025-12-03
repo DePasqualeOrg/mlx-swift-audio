@@ -1,0 +1,5 @@
+--indent 2
+--indentcase true
+--swiftversion 6.2
+--disable preferKeyPath
+--ifdef no-indent

@@ -21,12 +21,12 @@ class CustomAlbert {
   func callAsFunction(
     _ inputIds: MLXArray,
     tokenTypeIds: MLXArray? = nil,
-    attentionMask: MLXArray? = nil
+    attentionMask: MLXArray? = nil,
   ) -> (sequenceOutput: MLXArray, pooledOutput: MLXArray) {
     let embeddingOutput = embeddings(inputIds, tokenTypeIds: tokenTypeIds)
 
     var attentionMaskProcessed: MLXArray?
-    if let attentionMask = attentionMask {
+    if let attentionMask {
       let shape = attentionMask.shape
       let newDims = [shape[0], 1, 1, shape[1]]
       attentionMaskProcessed = attentionMask.reshaped(newDims)

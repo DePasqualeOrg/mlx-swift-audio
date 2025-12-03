@@ -22,7 +22,7 @@ class VoiceLoader {
   static func loadVoice(
     _ voice: TTSVoice,
     repoId: String = defaultRepoId,
-    progressHandler: @escaping (Progress) -> Void = { _ in }
+    progressHandler: @escaping (Progress) -> Void = { _ in },
   ) async throws -> MLXArray {
     let voiceId = voice.identifier
     let filename = "voices/\(voiceId).safetensors"
@@ -30,7 +30,7 @@ class VoiceLoader {
     let modelDirectoryURL = try await Hub.snapshot(
       from: repoId,
       matching: [filename],
-      progressHandler: progressHandler
+      progressHandler: progressHandler,
     )
 
     let voiceFileURL = modelDirectoryURL.appending(path: filename)
@@ -55,10 +55,10 @@ class VoiceLoader {
 
     var errorDescription: String? {
       switch self {
-      case .voiceFileNotFound(let filename):
-        return "Voice file not found: \(filename). Check your internet connection and try again."
-      case .invalidVoiceFile(let message):
-        return "Invalid voice file: \(message)"
+        case let .voiceFileNotFound(filename):
+          "Voice file not found: \(filename). Check your internet connection and try again."
+        case let .invalidVoiceFile(message):
+          "Invalid voice file: \(message)"
       }
     }
   }
@@ -69,58 +69,58 @@ extension TTSVoice {
   /// The voice identifier used for file names (e.g., "af_heart")
   var identifier: String {
     switch self {
-    case .afAlloy: return "af_alloy"
-    case .afAoede: return "af_aoede"
-    case .afBella: return "af_bella"
-    case .afHeart: return "af_heart"
-    case .afJessica: return "af_jessica"
-    case .afKore: return "af_kore"
-    case .afNicole: return "af_nicole"
-    case .afNova: return "af_nova"
-    case .afRiver: return "af_river"
-    case .afSarah: return "af_sarah"
-    case .afSky: return "af_sky"
-    case .amAdam: return "am_adam"
-    case .amEcho: return "am_echo"
-    case .amEric: return "am_eric"
-    case .amFenrir: return "am_fenrir"
-    case .amLiam: return "am_liam"
-    case .amMichael: return "am_michael"
-    case .amOnyx: return "am_onyx"
-    case .amPuck: return "am_puck"
-    case .amSanta: return "am_santa"
-    case .bfAlice: return "bf_alice"
-    case .bfEmma: return "bf_emma"
-    case .bfIsabella: return "bf_isabella"
-    case .bfLily: return "bf_lily"
-    case .bmDaniel: return "bm_daniel"
-    case .bmFable: return "bm_fable"
-    case .bmGeorge: return "bm_george"
-    case .bmLewis: return "bm_lewis"
-    case .efDora: return "ef_dora"
-    case .emAlex: return "em_alex"
-    case .ffSiwis: return "ff_siwis"
-    case .hfAlpha: return "hf_alpha"
-    case .hfBeta: return "hf_beta"
-    case .hfOmega: return "hm_omega"
-    case .hmPsi: return "hm_psi"
-    case .ifSara: return "if_sara"
-    case .imNicola: return "im_nicola"
-    case .jfAlpha: return "jf_alpha"
-    case .jfGongitsune: return "jf_gongitsune"
-    case .jfNezumi: return "jf_nezumi"
-    case .jfTebukuro: return "jf_tebukuro"
-    case .jmKumo: return "jm_kumo"
-    case .pfDora: return "pf_dora"
-    case .pmSanta: return "pm_santa"
-    case .zfXiaobei: return "zf_xiaobei"
-    case .zfXiaoni: return "zf_xiaoni"
-    case .zfXiaoxiao: return "zf_xiaoxiao"
-    case .zfXiaoyi: return "zf_xiaoyi"
-    case .zmYunjian: return "zm_yunjian"
-    case .zmYunxi: return "zm_yunxi"
-    case .zmYunxia: return "zm_yunxia"
-    case .zmYunyang: return "zm_yunyang"
+      case .afAlloy: "af_alloy"
+      case .afAoede: "af_aoede"
+      case .afBella: "af_bella"
+      case .afHeart: "af_heart"
+      case .afJessica: "af_jessica"
+      case .afKore: "af_kore"
+      case .afNicole: "af_nicole"
+      case .afNova: "af_nova"
+      case .afRiver: "af_river"
+      case .afSarah: "af_sarah"
+      case .afSky: "af_sky"
+      case .amAdam: "am_adam"
+      case .amEcho: "am_echo"
+      case .amEric: "am_eric"
+      case .amFenrir: "am_fenrir"
+      case .amLiam: "am_liam"
+      case .amMichael: "am_michael"
+      case .amOnyx: "am_onyx"
+      case .amPuck: "am_puck"
+      case .amSanta: "am_santa"
+      case .bfAlice: "bf_alice"
+      case .bfEmma: "bf_emma"
+      case .bfIsabella: "bf_isabella"
+      case .bfLily: "bf_lily"
+      case .bmDaniel: "bm_daniel"
+      case .bmFable: "bm_fable"
+      case .bmGeorge: "bm_george"
+      case .bmLewis: "bm_lewis"
+      case .efDora: "ef_dora"
+      case .emAlex: "em_alex"
+      case .ffSiwis: "ff_siwis"
+      case .hfAlpha: "hf_alpha"
+      case .hfBeta: "hf_beta"
+      case .hfOmega: "hm_omega"
+      case .hmPsi: "hm_psi"
+      case .ifSara: "if_sara"
+      case .imNicola: "im_nicola"
+      case .jfAlpha: "jf_alpha"
+      case .jfGongitsune: "jf_gongitsune"
+      case .jfNezumi: "jf_nezumi"
+      case .jfTebukuro: "jf_tebukuro"
+      case .jmKumo: "jm_kumo"
+      case .pfDora: "pf_dora"
+      case .pmSanta: "pm_santa"
+      case .zfXiaobei: "zf_xiaobei"
+      case .zfXiaoni: "zf_xiaoni"
+      case .zfXiaoxiao: "zf_xiaoxiao"
+      case .zfXiaoyi: "zf_xiaoyi"
+      case .zmYunjian: "zm_yunjian"
+      case .zmYunxi: "zm_yunxi"
+      case .zmYunxia: "zm_yunxia"
+      case .zmYunyang: "zm_yunyang"
     }
   }
 

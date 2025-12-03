@@ -13,7 +13,7 @@ class ProsodyPredictor {
   let F0Proj: Conv1dInference
   let NProj: Conv1dInference
 
-  public init(weights: [String: MLXArray], styleDim: Int, dHid: Int) {
+  init(weights: [String: MLXArray], styleDim: Int, dHid: Int) {
     shared = LSTM(
       inputSize: dHid + styleDim,
       hiddenSize: dHid / 2,
@@ -24,7 +24,7 @@ class ProsodyPredictor {
       wxBackward: weights["predictor.shared.weight_ih_l0_reverse"]!,
       whBackward: weights["predictor.shared.weight_hh_l0_reverse"]!,
       biasIhBackward: weights["predictor.shared.bias_ih_l0_reverse"]!,
-      biasHhBackward: weights["predictor.shared.bias_hh_l0_reverse"]!
+      biasHhBackward: weights["predictor.shared.bias_hh_l0_reverse"]!,
     )
 
     F0 = [
@@ -45,7 +45,7 @@ class ProsodyPredictor {
       kernelSize: 1,
       padding: 0,
       weight: weights["predictor.F0_proj.weight"]!,
-      bias: weights["predictor.F0_proj.bias"]!
+      bias: weights["predictor.F0_proj.bias"]!,
     )
 
     NProj = Conv1dInference(
@@ -54,7 +54,7 @@ class ProsodyPredictor {
       kernelSize: 1,
       padding: 0,
       weight: weights["predictor.N_proj.weight"]!,
-      bias: weights["predictor.N_proj.bias"]!
+      bias: weights["predictor.N_proj.bias"]!,
     )
   }
 

@@ -6,14 +6,14 @@ import MLX
 import MLXNN
 
 class Conv1dInference {
-  public let weight: MLXArray
-  public let bias: MLXArray?
-  public let padding: Int
-  public let dilation: Int
-  public let stride: Int
-  public let groups: Int
+  let weight: MLXArray
+  let bias: MLXArray?
+  let padding: Int
+  let dilation: Int
+  let stride: Int
+  let groups: Int
 
-  public init(
+  init(
     inputChannels _: Int,
     outputChannels _: Int,
     kernelSize _: Int,
@@ -22,7 +22,7 @@ class Conv1dInference {
     dilation: Int = 1,
     groups: Int = 1,
     weight: MLXArray,
-    bias: MLXArray? = nil
+    bias: MLXArray? = nil,
   ) {
     self.weight = weight
     self.bias = bias
@@ -34,7 +34,7 @@ class Conv1dInference {
 
   open func callAsFunction(_ x: MLXArray) -> MLXArray {
     var y = conv1d(
-      x, weight, stride: stride, padding: padding, dilation: dilation, groups: groups
+      x, weight, stride: stride, padding: padding, dilation: dilation, groups: groups,
     )
 
     if let bias {

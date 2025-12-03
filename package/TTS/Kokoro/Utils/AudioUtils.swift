@@ -28,7 +28,7 @@ class AudioUtils {
       forWriting: fileURL,
       settings: format.settings,
       commonFormat: format.commonFormat,
-      interleaved: format.isInterleaved
+      interleaved: format.isInterleaved,
     )
 
     try audioFile.write(from: buffer)

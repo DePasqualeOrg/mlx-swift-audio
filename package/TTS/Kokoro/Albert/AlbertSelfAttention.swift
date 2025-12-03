@@ -64,7 +64,7 @@ class AlbertSelfAttention {
 
   func callAsFunction(
     _ hiddenStates: MLXArray,
-    attentionMask: MLXArray? = nil
+    attentionMask: MLXArray? = nil,
   ) -> MLXArray {
     let mixedQueryLayer = query(hiddenStates)
     let mixedKeyLayer = key(hiddenStates)
@@ -78,7 +78,7 @@ class AlbertSelfAttention {
     var attentionScores = MLX.matmul(queryLayer, keyLayerTransposed)
     attentionScores = attentionScores / sqrt(Float(attentionHeadSize))
 
-    if let attentionMask = attentionMask {
+    if let attentionMask {
       attentionScores = attentionScores + attentionMask
     }
 

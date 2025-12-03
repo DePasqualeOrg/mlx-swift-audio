@@ -21,7 +21,7 @@ class SineGen {
     harmonicNum: Int = 0,
     sineAmp: Float = 0.1,
     noiseStd: Float = 0.003,
-    voicedThreshold: Float = 0
+    voicedThreshold: Float = 0,
   ) {
     self.sineAmp = sineAmp
     self.noiseStd = noiseStd
@@ -49,14 +49,14 @@ class SineGen {
     radValues = interpolate(
       input: radValues.transposed(0, 2, 1),
       scaleFactor: [1 / Float(upsampleScale)],
-      mode: "linear"
+      mode: "linear",
     ).transposed(0, 2, 1)
 
     var phase = MLX.cumsum(radValues, axis: 1) * 2 * Float.pi
     phase = interpolate(
       input: phase.transposed(0, 2, 1) * Float(upsampleScale),
       scaleFactor: [Float(upsampleScale)],
-      mode: "linear"
+      mode: "linear",
     ).transposed(0, 2, 1)
 
     return MLX.sin(phase)

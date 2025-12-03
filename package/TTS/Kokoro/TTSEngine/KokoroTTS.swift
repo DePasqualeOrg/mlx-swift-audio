@@ -70,14 +70,14 @@ actor KokoroTTS {
 
     var errorDescription: String? {
       switch self {
-      case .tooManyTokens:
-        return "Input text exceeds maximum token limit"
-      case .sentenceSplitError:
-        return "Failed to split text into sentences"
-      case .modelNotInitialized:
-        return "Model has not been initialized"
-      case .audioGenerationError:
-        return "Failed to generate audio"
+        case .tooManyTokens:
+          "Input text exceeds maximum token limit"
+        case .sentenceSplitError:
+          "Failed to split text into sentences"
+        case .modelNotInitialized:
+          "Model has not been initialized"
+        case .audioGenerationError:
+          "Failed to generate audio"
       }
     }
   }
@@ -110,21 +110,21 @@ actor KokoroTTS {
   private var progressHandler: @Sendable (Progress) -> Void
 
   // Callback type for streaming audio generation
-  public typealias AudioChunkCallback = @Sendable ([Float]) -> Void
+  typealias AudioChunkCallback = @Sendable ([Float]) -> Void
 
   /// Initializes with optional Hugging Face repo configuration.
   ///
   /// Models are downloaded from Hugging Face Hub on first use.
-  public init(
+  init(
     repoId: String = KokoroWeightLoader.defaultRepoId,
-    progressHandler: @escaping @Sendable (Progress) -> Void = { _ in }
+    progressHandler: @escaping @Sendable (Progress) -> Void = { _ in },
   ) {
     self.repoId = repoId
     self.progressHandler = progressHandler
   }
 
   // Reset the model to free up memory
-  public func resetModel(preserveTextProcessing: Bool = true) {
+  func resetModel(preserveTextProcessing: Bool = true) {
     // Reset heavy ML model components
     bert = nil
     bertEncoder = nil
@@ -146,7 +146,6 @@ actor KokoroTTS {
       }
       kokoroTokenizer = nil
     }
-
   }
 
   // Initialize model on demand
@@ -168,12 +167,12 @@ actor KokoroTTS {
     if !kokoroTokenizer.lexiconsLoaded {
       async let usLexicon = LexiconLoader.loadUSLexicon()
       async let gbLexicon = LexiconLoader.loadGBLexicon()
-      kokoroTokenizer.setLexicons(us: try await usLexicon, gb: try await gbLexicon)
+      try await kokoroTokenizer.setLexicons(us: usLexicon, gb: gbLexicon)
     }
 
     let sanitizedWeights = try await KokoroWeightLoader.loadWeights(
       repoId: repoId,
-      progressHandler: progressHandler
+      progressHandler: progressHandler,
     )
 
     bert = CustomAlbert(weights: sanitizedWeights, config: AlbertModelArgs())
@@ -190,18 +189,18 @@ actor KokoroTTS {
       wxBackward: sanitizedWeights["predictor.lstm.weight_ih_l0_reverse"]!,
       whBackward: sanitizedWeights["predictor.lstm.weight_hh_l0_reverse"]!,
       biasIhBackward: sanitizedWeights["predictor.lstm.bias_ih_l0_reverse"]!,
-      biasHhBackward: sanitizedWeights["predictor.lstm.bias_hh_l0_reverse"]!
+      biasHhBackward: sanitizedWeights["predictor.lstm.bias_hh_l0_reverse"]!,
     )
 
     durationProj = Linear(
       weight: sanitizedWeights["predictor.duration_proj.linear_layer.weight"]!,
-      bias: sanitizedWeights["predictor.duration_proj.linear_layer.bias"]!
+      bias: sanitizedWeights["predictor.duration_proj.linear_layer.bias"]!,
     )
 
     prosodyPredictor = ProsodyPredictor(
       weights: sanitizedWeights,
       styleDim: 128,
-      dHid: 512
+      dHid: 512,
     )
 
     textEncoder = TextEncoder(
@@ -209,7 +208,7 @@ actor KokoroTTS {
       channels: 512,
       kernelSize: 5,
       depth: 3,
-      nSymbols: 178
+      nSymbols: 178,
     )
 
     decoder = Decoder(
@@ -223,7 +222,7 @@ actor KokoroTTS {
       resblockDilationSizes: [[1, 3, 5], [1, 3, 5], [1, 3, 5]],
       upsampleKernelSizes: [20, 12],
       genIstftNFft: 20,
-      genIstftHopSize: 5
+      genIstftHopSize: 5,
     )
 
     isModelInitialized = true
@@ -231,7 +230,7 @@ actor KokoroTTS {
 
   private func generateAudioForTokens(
     inputIds: [Int],
-    speed: Float
+    speed: Float,
   ) throws -> [Float] {
     let paddedInputIdsBase = [0] + inputIds + [0]
     let paddedInputIds = MLXArray(paddedInputIdsBase).expandedDimensions(axes: [0])
@@ -256,8 +255,9 @@ actor KokoroTTS {
     attentionMask.eval()
 
     // Ensure model is initialized
-    guard let bert = bert,
-          let bertEncoder = bertEncoder else {
+    guard let bert,
+          let bertEncoder
+    else {
       throw KokoroTTSError.modelNotInitialized
     }
 
@@ -267,7 +267,7 @@ actor KokoroTTS {
     let dEn = bertEncoder(bertDur).transposed(0, 2, 1)
     dEn.eval()
 
-    guard let voice = voice else {
+    guard let voice else {
       throw KokoroTTSError.modelNotInitialized
     }
     // Voice shape is [510, 1, 256], index by phoneme length to get [1, 256]
@@ -280,9 +280,10 @@ actor KokoroTTS {
     s.eval()
 
     // Ensure all components are initialized
-    guard let durationEncoder = durationEncoder,
-          let predictorLSTM = predictorLSTM,
-          let durationProj = durationProj else {
+    guard let durationEncoder,
+          let predictorLSTM,
+          let durationProj
+    else {
       throw KokoroTTSError.modelNotInitialized
     }
 
@@ -308,7 +309,7 @@ actor KokoroTTS {
 
     for startIdx in stride(from: 0, to: predDur.shape[0], by: chunkSize) {
       let endIdx = min(startIdx + chunkSize, predDur.shape[0])
-      let chunkIndices = predDur[startIdx..<endIdx]
+      let chunkIndices = predDur[startIdx ..< endIdx]
 
       let indices = MLX.concatenated(
         chunkIndices.enumerated().map { i, n in
@@ -318,7 +319,7 @@ actor KokoroTTS {
           let repeated = MLX.repeated(arrayIndex, count: nSize)
           repeated.eval()
           return repeated
-        }
+        },
       )
       indices.eval()
       allIndices.append(indices)
@@ -345,7 +346,7 @@ actor KokoroTTS {
     let batchSize = 256
     for startIdx in stride(from: 0, to: indicesShape, by: batchSize) {
       let endIdx = min(startIdx + batchSize, indicesShape)
-      for i in startIdx..<endIdx {
+      for i in startIdx ..< endIdx {
         let indiceValue: Int = indices[i].item()
         if indiceValue < inputIdsShape {
           rowIndices.append(indiceValue)
@@ -359,10 +360,10 @@ actor KokoroTTS {
     let matrixBatchSize = 1000
     for startIdx in stride(from: 0, to: rowIndices.count, by: matrixBatchSize) {
       let endIdx = min(startIdx + matrixBatchSize, rowIndices.count)
-      for i in startIdx..<endIdx {
+      for i in startIdx ..< endIdx {
         let row = rowIndices[i]
         let col = colIndices[i]
-        if row < inputIdsShape && col < indicesShape {
+        if row < inputIdsShape, col < indicesShape {
           swiftPredAlnTrg[row * indicesShape + col] = 1.0
         }
       }
@@ -384,9 +385,10 @@ actor KokoroTTS {
     en.eval()
 
     // Ensure components are initialized
-    guard let prosodyPredictor = prosodyPredictor,
-          let textEncoder = textEncoder,
-          let decoder = decoder else {
+    guard let prosodyPredictor,
+          let textEncoder,
+          let decoder
+    else {
       throw KokoroTTSError.modelNotInitialized
     }
 
@@ -410,13 +412,12 @@ actor KokoroTTS {
     let audioShape = audio.shape
 
     // Check if the audio shape is valid
-    let totalSamples: Int
-    if audioShape.count == 1 {
-      totalSamples = audioShape[0]
+    let totalSamples: Int = if audioShape.count == 1 {
+      audioShape[0]
     } else if audioShape.count == 2 {
-      totalSamples = audioShape[1]
+      audioShape[1]
     } else {
-      totalSamples = 0
+      0
     }
 
     if totalSamples <= 1 {
@@ -427,7 +428,7 @@ actor KokoroTTS {
     return audio.asArray(Float.self)
   }
 
-  public func generateAudio(voice: TTSVoice, text: String, speed: Float = 1.0, chunkCallback: @escaping AudioChunkCallback) async throws {
+  func generateAudio(voice: TTSVoice, text: String, speed: Float = 1.0, chunkCallback: @escaping AudioChunkCallback) async throws {
     try await ensureModelInitialized()
 
     let sentences = SentenceTokenizer.splitIntoSentences(text: text)
@@ -438,18 +439,18 @@ actor KokoroTTS {
     self.voice = nil
 
     for sentence in sentences {
-      let audio = try await self.generateAudioForSentence(voice: voice, text: sentence, speed: speed)
+      let audio = try await generateAudioForSentence(voice: voice, text: sentence, speed: speed)
       chunkCallback(audio)
       MLX.GPU.clearCache()
     }
 
     // Reset model after completing a long text to free memory
     if sentences.count > 5 {
-      self.resetModel()
+      resetModel()
     }
   }
 
-  public func generateAudioStream(voice: TTSVoice, text: String, speed: Float = 1.0) async throws -> AsyncThrowingStream<[Float], Error> {
+  func generateAudioStream(voice: TTSVoice, text: String, speed: Float = 1.0) async throws -> AsyncThrowingStream<[Float], Error> {
     try await ensureModelInitialized()
 
     let sentences = SentenceTokenizer.splitIntoSentences(text: text)
@@ -482,7 +483,7 @@ actor KokoroTTS {
       self.voice = try await VoiceLoader.loadVoice(
         voice,
         repoId: repoId,
-        progressHandler: progressHandler
+        progressHandler: progressHandler,
       )
       self.voice?.eval() // Force immediate evaluation
 
@@ -499,7 +500,7 @@ actor KokoroTTS {
       }
 
       // Continue with normal audio generation
-      return try self.processTokensToAudio(inputIds: inputIds, speed: speed)
+      return try processTokensToAudio(inputIds: inputIds, speed: speed)
     } catch {
       // Re-throw the error instead of silently returning a beep
       // This allows proper error handling up the call stack
@@ -511,9 +512,9 @@ actor KokoroTTS {
   // Common processing method to convert tokens to audio - used by streaming methods
   private func processTokensToAudio(inputIds: [Int], speed: Float) throws -> [Float] {
     // Use the token processing method
-    return try generateAudioForTokens(
+    try generateAudioForTokens(
       inputIds: inputIds,
-      speed: speed
+      speed: speed,
     )
   }
 }

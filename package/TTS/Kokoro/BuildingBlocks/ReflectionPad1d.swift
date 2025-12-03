@@ -13,6 +13,6 @@ class ReflectionPad1d: Module {
   }
 
   func callAsFunction(_ x: MLXArray) -> MLXArray {
-    return MLX.padded(x, widths: [IntOrPair([0, 0]), IntOrPair([0, 0]), padding])
+    MLX.padded(x, widths: [IntOrPair([0, 0]), IntOrPair([0, 0]), padding])
   }
 }

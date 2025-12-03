@@ -24,7 +24,7 @@ class Decoder {
     resblockDilationSizes: [[Int]],
     upsampleKernelSizes: [Int],
     genIstftNFft: Int,
-    genIstftHopSize: Int
+    genIstftHopSize: Int,
   ) {
     encode = AdainResBlk1d(weights: weights, weightKeyPrefix: "decoder.encode", dimIn: dimIn + 2, dimOut: 1024, styleDim: styleDim)
 
@@ -39,7 +39,7 @@ class Decoder {
       bias: weights["decoder.F0_conv.bias"]!,
       stride: 2,
       padding: 1,
-      groups: 1
+      groups: 1,
     )
     NConv = ConvWeighted(
       weightG: weights["decoder.N_conv.weight_g"]!,
@@ -47,14 +47,14 @@ class Decoder {
       bias: weights["decoder.N_conv.bias"]!,
       stride: 2,
       padding: 1,
-      groups: 1
+      groups: 1,
     )
 
     asrRes = [ConvWeighted(
       weightG: weights["decoder.asr_res.0.weight_g"]!,
       weightV: weights["decoder.asr_res.0.weight_v"]!,
       bias: weights["decoder.asr_res.0.bias"]!,
-      padding: 0
+      padding: 0,
     )]
 
     generator = Generator(
@@ -66,7 +66,7 @@ class Decoder {
       resblockDilationSizes: resblockDilationSizes,
       upsampleKernelSizes: upsampleKernelSizes,
       genIstftNFft: genIstftNFft,
-      genIstftHopSize: genIstftHopSize
+      genIstftHopSize: genIstftHopSize,
     )
   }
 
