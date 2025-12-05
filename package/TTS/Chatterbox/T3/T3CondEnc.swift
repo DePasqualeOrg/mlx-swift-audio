@@ -12,23 +12,23 @@ import MLXNN
 // MARK: - T3Cond
 
 /// Container for T3 conditioning information
-public struct T3Cond: @unchecked Sendable {
+struct T3Cond: @unchecked Sendable {
   /// Speaker embedding from voice encoder (B, speaker_dim)
-  public var speakerEmb: MLXArray
+  var speakerEmb: MLXArray
 
   /// Optional CLAP embedding for semantic conditioning
-  public var clapEmb: MLXArray?
+  var clapEmb: MLXArray?
 
   /// Optional speech token prompt (B, T)
-  public var condPromptSpeechTokens: MLXArray?
+  var condPromptSpeechTokens: MLXArray?
 
   /// Optional embedded speech prompt (B, T, D)
-  public var condPromptSpeechEmb: MLXArray?
+  var condPromptSpeechEmb: MLXArray?
 
   /// Emotion exaggeration factor, typically 0.3-0.7 (scalar or (B, 1))
-  public var emotionAdv: MLXArray
+  var emotionAdv: MLXArray
 
-  public init(
+  init(
     speakerEmb: MLXArray,
     clapEmb: MLXArray? = nil,
     condPromptSpeechTokens: MLXArray? = nil,
@@ -47,14 +47,14 @@ public struct T3Cond: @unchecked Sendable {
 
 /// Conditioning encoder for T3 model.
 /// Handles speaker embeddings, emotion control, and prompt speech tokens.
-public class T3CondEnc: Module {
-  public let config: T3Config
+class T3CondEnc: Module {
+  let config: T3Config
 
   @ModuleInfo(key: "spkr_enc") var spkrEnc: Linear
   @ModuleInfo(key: "emotion_adv_fc") var emotionAdvFc: Linear
   @ModuleInfo(key: "perceiver") var perceiver: Perceiver
 
-  public init(config: T3Config) {
+  init(config: T3Config) {
     self.config = config
 
     // Speaker embedding projection
@@ -77,7 +77,7 @@ public class T3CondEnc: Module {
   ///
   /// - Parameter cond: T3Cond struct with conditioning information
   /// - Returns: Conditioning embeddings (B, cond_len, D)
-  public func callAsFunction(_ cond: T3Cond) -> MLXArray {
+  func callAsFunction(_ cond: T3Cond) -> MLXArray {
     // Validate
     let hasTokens = cond.condPromptSpeechTokens != nil
     let hasEmb = cond.condPromptSpeechEmb != nil

@@ -8,39 +8,6 @@ import Tokenizers
 
 // MARK: - Configs
 
-enum JSONValue: Codable, Equatable, Sendable {
-  case string(String)
-  case number(Double)
-  case bool(Bool)
-  case object([String: JSONValue])
-  case array([JSONValue])
-  case null
-
-  init(from decoder: Swift.Decoder) throws {
-    let c = try decoder.singleValueContainer()
-    if c.decodeNil() { self = .null; return }
-    if let b = try? c.decode(Bool.self) { self = .bool(b); return }
-    if let i = try? c.decode(Int.self) { self = .number(Double(i)); return }
-    if let d = try? c.decode(Double.self) { self = .number(d); return }
-    if let s = try? c.decode(String.self) { self = .string(s); return }
-    if let a = try? c.decode([JSONValue].self) { self = .array(a); return }
-    if let o = try? c.decode([String: JSONValue].self) { self = .object(o); return }
-    throw DecodingError.dataCorruptedError(in: c, debugDescription: "Unsupported JSON value")
-  }
-
-  func encode(to encoder: Encoder) throws {
-    var c = encoder.singleValueContainer()
-    switch self {
-      case .null: try c.encodeNil()
-      case let .bool(b): try c.encode(b)
-      case let .number(d): try c.encode(d)
-      case let .string(s): try c.encode(s)
-      case let .array(a): try c.encode(a)
-      case let .object(o): try c.encode(o)
-    }
-  }
-}
-
 struct DepthDecoderConfig: Codable, Sendable {
   let attentionBias: Bool
   let attentionDropout: Double
@@ -58,7 +25,7 @@ struct DepthDecoderConfig: Codable, Sendable {
   let numHiddenLayers: Int
   let numKeyValueHeads: Int
   let rmsNormEps: Double
-  let ropeScaling: [String: JSONValue]?
+  let ropeScaling: [String: StringOrNumber]?
   let ropeTheta: Int
   let useCache: Bool
   let vocabSize: Int
@@ -80,7 +47,7 @@ struct DepthDecoderConfig: Codable, Sendable {
     numHiddenLayers: Int,
     numKeyValueHeads: Int,
     rmsNormEps: Double,
-    ropeScaling: [String: JSONValue]?,
+    ropeScaling: [String: StringOrNumber]?,
     ropeTheta: Int,
     useCache: Bool,
     vocabSize: Int,
@@ -131,7 +98,7 @@ struct DepthDecoderConfig: Codable, Sendable {
   }
 }
 
-struct MarvisModelArgs: Codable, Sendable {
+struct MarvisConfig: Codable, Sendable {
   let modelType: String
   let backboneFlavor: String?
   let decoderFlavor: String?
@@ -159,13 +126,13 @@ struct MarvisModelArgs: Codable, Sendable {
   let numKeyValueHeads: Int
   let padTokenId: Int
   let rmsNormEps: Double
-  let ropeScaling: [String: JSONValue]?
+  let ropeScaling: [String: StringOrNumber]?
   let ropeTheta: Int
   let tieCodebooksEmbeddings: Bool
   let tieWordEmbeddings: Bool
   let useCache: Bool
   let vocabSize: Int
-  let quantization: [String: JSONValue]?
+  let quantization: [String: StringOrNumber]?
 
   init(
     modelType: String,
@@ -195,13 +162,13 @@ struct MarvisModelArgs: Codable, Sendable {
     numKeyValueHeads: Int,
     padTokenId: Int,
     rmsNormEps: Double,
-    ropeScaling: [String: JSONValue]?,
+    ropeScaling: [String: StringOrNumber]?,
     ropeTheta: Int,
     tieCodebooksEmbeddings: Bool,
     tieWordEmbeddings: Bool,
     useCache: Bool,
     vocabSize: Int,
-    quantization: [String: JSONValue]?,
+    quantization: [String: StringOrNumber]?,
   ) {
     self.modelType = modelType
     self.backboneFlavor = backboneFlavor
@@ -277,54 +244,40 @@ struct MarvisModelArgs: Codable, Sendable {
   }
 }
 
-extension MarvisModelArgs {
-  static func load(from data: Data) throws -> MarvisModelArgs {
+extension MarvisConfig {
+  static func load(from data: Data) throws -> MarvisConfig {
     let dec = JSONDecoder()
     dec.keyDecodingStrategy = .useDefaultKeys
-    return try dec.decode(MarvisModelArgs.self, from: data)
+    return try dec.decode(MarvisConfig.self, from: data)
   }
 
-  static func load(from url: URL) throws -> MarvisModelArgs {
+  static func load(from url: URL) throws -> MarvisConfig {
     try load(from: Data(contentsOf: url))
   }
 }
 
-private func toStringOrNumber(_ dict: [String: JSONValue]?) -> [String: StringOrNumber]? {
-  guard let dict else { return nil }
-  var out: [String: StringOrNumber] = [:]
-  for (k, v) in dict {
-    switch v {
-      case let .string(s): out[k] = .string(s)
-      case let .number(d): out[k] = .float(Float(d))
-      case let .bool(b): out[k] = .float(b ? 1.0 : 0.0)
-      case .null, .array, .object: continue
-    }
-  }
-  return out.isEmpty ? nil : out
-}
-
-func createMarvisLlamaConfigForBackbone(_ cfg: MarvisModelArgs) -> MarvisLlamaConfig {
-  MarvisLlamaConfig(
-    hiddenSize: cfg.hiddenSize,
-    hiddenLayers: cfg.numHiddenLayers,
-    intermediateSize: cfg.intermediateSize,
-    attentionHeads: cfg.numAttentionHeads,
-    headDimensions: cfg.headDim,
-    rmsNormEps: Float(cfg.rmsNormEps),
-    vocabularySize: cfg.textVocabSize,
-    kvHeads: cfg.numKeyValueHeads,
-    maxPositionEmbeddings: cfg.maxPositionEmbeddings,
-    ropeTheta: Float(cfg.ropeTheta),
+func createMarvisBackboneConfigForBackbone(_ config: MarvisConfig) -> MarvisBackboneConfig {
+  MarvisBackboneConfig(
+    hiddenSize: config.hiddenSize,
+    hiddenLayers: config.numHiddenLayers,
+    intermediateSize: config.intermediateSize,
+    attentionHeads: config.numAttentionHeads,
+    headDimensions: config.headDim,
+    rmsNormEps: Float(config.rmsNormEps),
+    vocabularySize: config.textVocabSize,
+    kvHeads: config.numKeyValueHeads,
+    maxPositionEmbeddings: config.maxPositionEmbeddings,
+    ropeTheta: Float(config.ropeTheta),
     ropeTraditional: false,
-    ropeScaling: toStringOrNumber(cfg.ropeScaling),
-    tieWordEmbeddings: cfg.tieWordEmbeddings,
-    attentionBias: cfg.attentionBias,
-    mlpBias: cfg.mlpBias,
+    ropeScaling: config.ropeScaling,
+    tieWordEmbeddings: config.tieWordEmbeddings,
+    attentionBias: config.attentionBias,
+    mlpBias: config.mlpBias,
   )
 }
 
-func createMarvisLlamaConfigForDecoder(_ d: DepthDecoderConfig) -> MarvisLlamaConfig {
-  MarvisLlamaConfig(
+func createMarvisBackboneConfigForDecoder(_ d: DepthDecoderConfig) -> MarvisBackboneConfig {
+  MarvisBackboneConfig(
     hiddenSize: d.hiddenSize,
     hiddenLayers: d.numHiddenLayers,
     intermediateSize: d.intermediateSize,
@@ -336,17 +289,17 @@ func createMarvisLlamaConfigForDecoder(_ d: DepthDecoderConfig) -> MarvisLlamaCo
     maxPositionEmbeddings: d.maxPositionEmbeddings,
     ropeTheta: Float(d.ropeTheta),
     ropeTraditional: false,
-    ropeScaling: toStringOrNumber(d.ropeScaling),
+    ropeScaling: d.ropeScaling,
     tieWordEmbeddings: true,
     attentionBias: d.attentionBias,
     mlpBias: d.mlpBias,
   )
 }
 
-func createMarvisLlamaConfig(flavor: String) throws -> MarvisLlamaConfig {
+func createMarvisBackboneConfig(flavor: String) throws -> MarvisBackboneConfig {
   switch flavor {
     case "llama-1B":
-      return MarvisLlamaConfig(
+      return MarvisBackboneConfig(
         hiddenSize: 2048,
         hiddenLayers: 16,
         intermediateSize: 8192,
@@ -371,7 +324,7 @@ func createMarvisLlamaConfig(flavor: String) throws -> MarvisLlamaConfig {
       )
 
     case "llama-100M":
-      return MarvisLlamaConfig(
+      return MarvisBackboneConfig(
         hiddenSize: 1024,
         hiddenLayers: 4,
         intermediateSize: 8192,
@@ -404,59 +357,59 @@ func createMarvisLlamaConfig(flavor: String) throws -> MarvisLlamaConfig {
 // MARK: - Model
 
 final class MarvisModel: Module {
-  let args: MarvisModelArgs
+  let args: MarvisConfig
 
-  @ModuleInfo var backbone: MarvisLlamaBackbone
-  @ModuleInfo var decoder: MarvisLlamaBackbone
+  @ModuleInfo var backbone: MarvisBackbone
+  @ModuleInfo var decoder: MarvisBackbone
 
-  @ModuleInfo var text_embeddings: Embedding
-  @ModuleInfo var audio_embeddings: Embedding
+  @ModuleInfo(key: "text_embeddings") var textEmbeddings: Embedding
+  @ModuleInfo(key: "audio_embeddings") var audioEmbeddings: Embedding
   @ModuleInfo var projection: Linear // backbone_dim -> decoder_dim
-  @ModuleInfo var codebook0_head: Linear // logits for codebook 0
-  var audio_head: MLXArray // [nq-1, decoder_dim, audio_vocab]
+  @ModuleInfo(key: "codebook0_head") var codebook0Head: Linear // logits for codebook 0
+  @ModuleInfo(key: "audio_head") var audioHead: MLXArray // [nq-1, decoder_dim, audio_vocab]
 
   private var backboneCausalMask: MLXArray?
   private var decoderCausalMask: MLXArray?
 
-  var backboneCache: [TTSKVCache]?
-  var decoderCache: [TTSKVCache]?
+  var backboneCache: [KVCache]?
+  var decoderCache: [KVCache]?
   var cachesEnabled: Bool = false
 
-  init(config: MarvisModelArgs) throws {
+  init(config: MarvisConfig) throws {
     args = config
 
-    let backCfg: MarvisLlamaConfig
-    let decCfg: MarvisLlamaConfig
+    let backboneConfig: MarvisBackboneConfig
+    let decoderConfig: MarvisBackboneConfig
     if let depth = config.depthDecoderConfig {
-      backCfg = createMarvisLlamaConfigForBackbone(config)
-      decCfg = createMarvisLlamaConfigForDecoder(depth)
+      backboneConfig = createMarvisBackboneConfigForBackbone(config)
+      decoderConfig = createMarvisBackboneConfigForDecoder(depth)
     } else {
       guard let backboneFlavor = config.backboneFlavor, let decoderFlavor = config.decoderFlavor else {
         fatalError("Either depthDecoderConfig or both backboneFlavor and decoderFlavor must be provided")
       }
       do {
-        backCfg = try createMarvisLlamaConfig(flavor: backboneFlavor)
-        decCfg = try createMarvisLlamaConfig(flavor: decoderFlavor)
+        backboneConfig = try createMarvisBackboneConfig(flavor: backboneFlavor)
+        decoderConfig = try createMarvisBackboneConfig(flavor: decoderFlavor)
       } catch {
-        fatalError("Failed to create MarvisLlamaConfig: \(error). Backbone flavor: \(backboneFlavor), Decoder flavor: \(decoderFlavor)")
+        fatalError("Failed to create MarvisBackboneConfig: \(error). Backbone flavor: \(backboneFlavor), Decoder flavor: \(decoderFlavor)")
       }
     }
 
-    _backbone = ModuleInfo(wrappedValue: MarvisLlamaBackbone(backCfg))
-    _decoder = ModuleInfo(wrappedValue: MarvisLlamaBackbone(decCfg))
+    _backbone.wrappedValue = MarvisBackbone(backboneConfig)
+    _decoder.wrappedValue = MarvisBackbone(decoderConfig)
 
-    let backboneDim = backCfg.hiddenSize
-    let decoderDim = decCfg.hiddenSize
+    let backboneDim = backboneConfig.hiddenSize
+    let decoderDim = decoderConfig.hiddenSize
 
-    _text_embeddings = ModuleInfo(wrappedValue: Embedding(embeddingCount: args.textVocabSize, dimensions: backboneDim))
+    _textEmbeddings.wrappedValue = Embedding(embeddingCount: args.textVocabSize, dimensions: backboneDim)
     let audioVocabCombined = args.audioVocabSize * args.audioNumCodebooks
-    _audio_embeddings = ModuleInfo(wrappedValue: Embedding(embeddingCount: audioVocabCombined, dimensions: backboneDim))
+    _audioEmbeddings.wrappedValue = Embedding(embeddingCount: audioVocabCombined, dimensions: backboneDim)
 
-    _projection = ModuleInfo(wrappedValue: Linear(backboneDim, decoderDim, bias: false))
-    _codebook0_head = ModuleInfo(wrappedValue: Linear(backboneDim, args.audioVocabSize, bias: false))
+    _projection.wrappedValue = Linear(backboneDim, decoderDim, bias: false)
+    _codebook0Head.wrappedValue = Linear(backboneDim, args.audioVocabSize, bias: false)
 
     let restCodebooks = max(args.audioNumCodebooks - 1, 0)
-    audio_head = MLXArray.zeros([restCodebooks, decoderDim, args.audioVocabSize])
+    _audioHead.wrappedValue = MLXArray.zeros([restCodebooks, decoderDim, args.audioVocabSize])
 
     backboneCache = nil
     decoderCache = nil
@@ -466,26 +419,26 @@ final class MarvisModel: Module {
   func cachesAreEnabled() -> Bool { cachesEnabled }
 
   func resetCaches() throws {
-    let backCfg: MarvisLlamaConfig
-    let decCfg: MarvisLlamaConfig
+    let backboneConfig: MarvisBackboneConfig
+    let decoderConfig: MarvisBackboneConfig
 
     if let depth = args.depthDecoderConfig {
-      backCfg = createMarvisLlamaConfigForBackbone(args)
-      decCfg = createMarvisLlamaConfigForDecoder(depth)
+      backboneConfig = createMarvisBackboneConfigForBackbone(args)
+      decoderConfig = createMarvisBackboneConfigForDecoder(depth)
     } else {
       guard let backboneFlavor = args.backboneFlavor, let decoderFlavor = args.decoderFlavor else {
         fatalError("Either depthDecoderConfig or both backboneFlavor and decoderFlavor must be provided")
       }
       do {
-        backCfg = try createMarvisLlamaConfig(flavor: backboneFlavor)
-        decCfg = try createMarvisLlamaConfig(flavor: decoderFlavor)
+        backboneConfig = try createMarvisBackboneConfig(flavor: backboneFlavor)
+        decoderConfig = try createMarvisBackboneConfig(flavor: decoderFlavor)
       } catch {
-        fatalError("Failed to create MarvisLlamaConfig: \(error). Backbone flavor: \(backboneFlavor), Decoder flavor: \(decoderFlavor)")
+        fatalError("Failed to create MarvisBackboneConfig: \(error). Backbone flavor: \(backboneFlavor), Decoder flavor: \(decoderFlavor)")
       }
     }
 
-    backboneCache = (0 ..< backCfg.hiddenLayers).map { _ in TTSKVCache(headDim: backCfg.resolvedHeadDimensions, nKVHeads: backCfg.kvHeads) }
-    decoderCache = (0 ..< decCfg.hiddenLayers).map { _ in TTSKVCache(headDim: decCfg.resolvedHeadDimensions, nKVHeads: decCfg.kvHeads) }
+    backboneCache = (0 ..< backboneConfig.hiddenLayers).map { _ in KVCacheSimple() }
+    decoderCache = (0 ..< decoderConfig.hiddenLayers).map { _ in KVCacheSimple() }
     cachesEnabled = true
   }
 
@@ -504,56 +457,56 @@ final class MarvisModel: Module {
     h = backbone(h, cache: backboneCache) // [B, T, D]
 
     let B = h.shape[0]
-    let D_backbone = h.shape[2]
+    let dBackbone = h.shape[2]
     let lastT = h.shape[1] - 1
     let split1 = split(h, indices: [lastT], axis: 1)
     let lastSlice = split(split1[1], indices: [1], axis: 1)[0] // [B, 1, D]
-    let lastH = lastSlice.reshaped([B, D_backbone]) // [B, D]
+    let lastH = lastSlice.reshaped([B, dBackbone]) // [B, D]
 
-    let c0Logits = codebook0_head(lastH) // [B, vocab_audio]
+    let c0Logits = codebook0Head(lastH) // [B, vocab_audio]
     let c0SampleVec = sampler(c0Logits) // [B]
     let c0Sample = c0SampleVec.expandedDimensions(axis: -1) // [B, 1]
-    let c0Embed = _embedAudio(codebook: 0, tokens: c0Sample) // [B, 1, D_backbone]
+    let c0Embed = _embedAudio(codebook: 0, tokens: c0Sample) // [B, 1, dBackbone]
 
-    let lastH3 = expandedDimensions(lastH, axis: 1) // [B, 1, D_backbone]
-    var currH = concatenated([lastH3, c0Embed], axis: 1) // [B, 2, D_backbone]
+    let lastH3 = expandedDimensions(lastH, axis: 1) // [B, 1, dBackbone]
+    var currH = concatenated([lastH3, c0Embed], axis: 1) // [B, 2, dBackbone]
     var currSample = c0Sample // [B, 1]
 
     let basePos = MLXArray.arange(2).reshaped([1, 2])
     var currPos = repeated(basePos, count: B, axis: 0) // [B, 2]
 
-    let decCfg: MarvisLlamaConfig
+    let decoderConfig: MarvisBackboneConfig
     if let depth = args.depthDecoderConfig {
-      decCfg = createMarvisLlamaConfigForDecoder(depth)
+      decoderConfig = createMarvisBackboneConfigForDecoder(depth)
     } else {
       guard let decoderFlavor = args.decoderFlavor else {
         fatalError("Either depthDecoderConfig or decoderFlavor must be provided")
       }
       do {
-        decCfg = try createMarvisLlamaConfig(flavor: decoderFlavor)
+        decoderConfig = try createMarvisBackboneConfig(flavor: decoderFlavor)
       } catch {
-        fatalError("Failed to create MarvisLlamaConfig for decoder: \(error). Decoder flavor: \(decoderFlavor)")
+        fatalError("Failed to create MarvisBackboneConfig for decoder: \(error). Decoder flavor: \(decoderFlavor)")
       }
     }
-    decoderCache = (0 ..< decCfg.hiddenLayers).map { _ in TTSKVCache(headDim: decCfg.resolvedHeadDimensions, nKVHeads: decCfg.kvHeads) }
+    decoderCache = (0 ..< decoderConfig.hiddenLayers).map { _ in KVCacheSimple() }
 
     let codeBooks = min(args.audioNumCodebooks, maxCodebooks)
     if codeBooks > 1 {
       for i in 1 ..< codeBooks {
-        let decH = decoder(projection(currH), cache: decoderCache) // [B, Tcur, D_dec]
+        let decH = decoder(projection(currH), cache: decoderCache) // [B, Tcur, dDec]
 
-        let D_dec = decH.shape[2]
+        let dDec = decH.shape[2]
         let lastSplit1 = split(decH, indices: [decH.shape[1] - 1], axis: 1)
-        let lastDec = split(lastSplit1[1], indices: [1], axis: 1)[0].reshaped([B, D_dec]) // [B, D_dec]
+        let lastDec = split(lastSplit1[1], indices: [1], axis: 1)[0].reshaped([B, dDec]) // [B, dDec]
 
-        let Wi = take2DHead(audio_head, index: i - 1)
+        let Wi = take2DHead(audioHead, index: i - 1)
         let ciLogits = matmul(lastDec, Wi) // [B, vocab_audio]
 
         let ciSampleVec = sampler(ciLogits) // [B]
         let ciSample = expandedDimensions(ciSampleVec, axis: -1) // [B, 1]
-        let ciEmbed = _embedAudio(codebook: i, tokens: ciSample) // [B, 1, D_backbone]
+        let ciEmbed = _embedAudio(codebook: i, tokens: ciSample) // [B, 1, dBackbone]
 
-        currH = ciEmbed // [B, 1, D_backbone]
+        currH = ciEmbed // [B, 1, dBackbone]
         currSample = concatenated([currSample, ciSample], axis: 1)
         currPos = split(currPos, indices: [1], axis: 1)[1] + MLXArray(1)
       }
@@ -565,7 +518,7 @@ final class MarvisModel: Module {
   private func _embedAudio(codebook: Int, tokens: MLXArray) -> MLXArray {
     let offset = codebook * args.audioVocabSize
     let shifted = tokens + MLXArray(offset)
-    return audio_embeddings(shifted)
+    return audioEmbeddings(shifted)
   }
 
   private func _embedTokens(_ tokens: MLXArray) -> MLXArray {
@@ -578,7 +531,7 @@ final class MarvisModel: Module {
     let audioIds = split1[0] // [B, T, Cb]
     let textIds = split(split1[1], indices: [1], axis: 2)[0].reshaped([B, T]) // [B, T]
 
-    var textEmb = text_embeddings(textIds) // [B, T, D]
+    var textEmb = textEmbeddings(textIds) // [B, T, D]
     textEmb = expandedDimensions(textEmb, axis: -2) // [B, T, 1, D]
 
     let cbIdx = MLXArray.arange(Cb) // [Cb]
@@ -586,7 +539,7 @@ final class MarvisModel: Module {
     let shiftedAudioIds = audioIds + cbOffsets // [B, T, Cb]
 
     let flat = shiftedAudioIds.flattened() // [B*T*Cb]
-    let audioFlatEmb = audio_embeddings(flat) // [B*T*Cb, D]
+    let audioFlatEmb = audioEmbeddings(flat) // [B*T*Cb, D]
     let D = audioFlatEmb.shape[1]
     let audioEmb = audioFlatEmb.reshaped([B, T, Cb, D]) // [B, T, Cb, D]
 

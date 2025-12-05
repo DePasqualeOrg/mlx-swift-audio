@@ -13,12 +13,12 @@ import MLXNN
 // MARK: - BaseSubsampling
 
 /// Base class for subsampling modules
-public class BaseSubsampling: Module {
+class BaseSubsampling: Module {
   var rightContext: Int = 0
   var subsamplingRate: Int = 1
   var posEnc: Module?
 
-  public func positionEncoding(offset: Int, size: Int) -> MLXArray {
+  func positionEncoding(offset: Int, size: Int) -> MLXArray {
     if let enc = posEnc as? PositionalEncoding {
       return enc.positionEncoding(offset: offset, size: size)
     } else if let enc = posEnc as? RelPositionalEncoding {
@@ -32,13 +32,13 @@ public class BaseSubsampling: Module {
 
 /// Linear transform the input without subsampling
 /// Used in UpsampleConformerEncoder
-public class LinearNoSubsampling: BaseSubsampling {
+class LinearNoSubsampling: BaseSubsampling {
   @ModuleInfo(key: "linear") var linear: Linear
   @ModuleInfo(key: "norm") var norm: LayerNorm
   @ModuleInfo(key: "pos_enc") var posEncModule: Module?
   let dropoutRate: Float
 
-  public init(
+  init(
     idim: Int,
     odim: Int,
     dropoutRate: Float,
@@ -55,7 +55,7 @@ public class LinearNoSubsampling: BaseSubsampling {
   }
 
   /// Apply linear transformation without subsampling
-  public func callAsFunction(
+  func callAsFunction(
     _ x: MLXArray,
     xMask: MLXArray,
     offset: Int = 0,

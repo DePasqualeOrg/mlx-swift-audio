@@ -8,7 +8,10 @@ import Tokenizers
 
 // MARK: - Main Class
 
-public final class MarvisTTS: Module {
+/// Marvis orchestrator combining the model with tokenizers (Module-based)
+///
+/// Note: This is a Module subclass for weight loading. Use `MarvisTTS` (actor) for thread-safe access.
+public final class MarvisOrchestrator: Module {
   public struct GenerationResult: Sendable {
     public let audio: [Float]
     public let sampleRate: Int
@@ -38,7 +41,7 @@ public final class MarvisTTS: Module {
   // MARK: - Initializers
 
   init(
-    config: MarvisModelArgs,
+    config: MarvisConfig,
     repoId: String,
     promptURLs: [URL]? = nil,
     progressHandler: @escaping (Progress) -> Void,
@@ -48,7 +51,7 @@ public final class MarvisTTS: Module {
     textTokenizer = try await loadTokenizer(configuration: ModelConfiguration(id: repoId), hub: HubApi.shared)
     audioTokenizer = try await MimiTokenizer(Mimi.fromPretrained(progressHandler: progressHandler))
     streamingDecoder = MimiStreamingDecoder(audioTokenizer.codec)
-    sampleRate = audioTokenizer.codec.cfg.sampleRate
+    sampleRate = audioTokenizer.codec.config.sampleRate
 
     super.init()
 
@@ -87,7 +90,7 @@ public final class MarvisTTS: Module {
 
 // MARK: - Public API
 
-extension MarvisTTS {
+extension MarvisOrchestrator {
   /// Manually triggers memory cleanup for this TTS instance
   func cleanUpMemory() throws {
     try model.resetCaches()
@@ -142,7 +145,7 @@ extension MarvisTTS {
     voice: MarvisEngine.Voice = .conversationalA,
     repoId: String = "Marvis-AI/marvis-tts-250m-v0.1",
     progressHandler: @escaping (Progress) -> Void = { _ in },
-  ) async throws -> MarvisTTS {
+  ) async throws -> MarvisOrchestrator {
     let engine = try await fromPretrained(repoId: repoId, progressHandler: progressHandler)
     engine.boundVoice = voice
     engine.boundRefAudio = nil
@@ -156,7 +159,7 @@ extension MarvisTTS {
     refText: String,
     repoId: String = "Marvis-AI/marvis-tts-250m-v0.1",
     progressHandler: @escaping (Progress) -> Void = { _ in },
-  ) async throws -> MarvisTTS {
+  ) async throws -> MarvisOrchestrator {
     let engine = try await fromPretrained(repoId: repoId, progressHandler: progressHandler)
     engine.boundVoice = nil
     engine.boundRefAudio = refAudio
@@ -167,9 +170,9 @@ extension MarvisTTS {
   static func fromPretrained(
     repoId: String = "Marvis-AI/marvis-tts-250m-v0.1",
     progressHandler: @escaping (Progress) -> Void,
-  ) async throws -> MarvisTTS {
+  ) async throws -> MarvisOrchestrator {
     let (args, prompts, weightFileURL) = try await snapshotAndConfig(repoId: repoId, progressHandler: progressHandler)
-    let model = try await MarvisTTS(config: args, repoId: repoId, promptURLs: prompts, progressHandler: progressHandler)
+    let model = try await MarvisOrchestrator(config: args, repoId: repoId, promptURLs: prompts, progressHandler: progressHandler)
     try model.installWeights(args: args, weightFileURL: weightFileURL)
     return model
   }
@@ -177,13 +180,13 @@ extension MarvisTTS {
 
 // MARK: - Private Helpers
 
-private extension MarvisTTS {
+private extension MarvisOrchestrator {
   // MARK: - Model Loading
 
   static func snapshotAndConfig(
     repoId: String,
     progressHandler: @escaping (Progress) -> Void,
-  ) async throws -> (args: MarvisModelArgs, promptURLs: [URL], weightFileURL: URL) {
+  ) async throws -> (args: MarvisConfig, promptURLs: [URL], weightFileURL: URL) {
     let modelDirectoryURL = try await Hub.snapshot(from: repoId, progressHandler: progressHandler)
     let weightFileURL = modelDirectoryURL.appending(path: "model.safetensors")
     let promptDir = modelDirectoryURL.appending(path: "prompts", directoryHint: .isDirectory)
@@ -192,22 +195,24 @@ private extension MarvisTTS {
       audioPromptURLs.append(url)
     }
     let configFileURL = modelDirectoryURL.appending(path: "config.json")
-    let args = try JSONDecoder().decode(MarvisModelArgs.self, from: Data(contentsOf: configFileURL))
+    let args = try JSONDecoder().decode(MarvisConfig.self, from: Data(contentsOf: configFileURL))
     return (args, audioPromptURLs, weightFileURL)
   }
 
-  func installWeights(args: MarvisModelArgs, weightFileURL: URL) throws {
+  func installWeights(args: MarvisConfig, weightFileURL: URL) throws {
     var weights: [String: MLXArray] = [:]
     let w = try loadArrays(url: weightFileURL)
     for (k, v) in w {
       weights[k] = v
     }
 
-    func extractInt(from value: JSONValue?) -> Int? {
+    func extractInt(from value: StringOrNumber?) -> Int? {
       guard let value else { return nil }
       switch value {
-        case let .number(d):
-          return Int(d)
+        case let .int(i):
+          return i
+        case let .float(f):
+          return Int(f)
         case let .string(s):
           return Int(s)
         default:
@@ -238,7 +243,7 @@ private extension MarvisTTS {
     voice: MarvisEngine.Voice = .conversationalA,
     model: String = MarvisEngine.ModelVariant.default.repoId,
     progressHandler: @escaping (Progress) -> Void = { _ in },
-  ) async throws -> MarvisTTS {
+  ) async throws -> MarvisOrchestrator {
     let engine = try await fromPretrained(model: model, progressHandler: progressHandler)
     engine.boundVoice = voice
     engine.boundRefAudio = nil
@@ -252,7 +257,7 @@ private extension MarvisTTS {
     refText: String,
     model: String = MarvisEngine.ModelVariant.default.repoId,
     progressHandler: @escaping (Progress) -> Void = { _ in },
-  ) async throws -> MarvisTTS {
+  ) async throws -> MarvisOrchestrator {
     let engine = try await fromPretrained(model: model, progressHandler: progressHandler)
     engine.boundVoice = nil
     engine.boundRefAudio = refAudio
@@ -260,9 +265,9 @@ private extension MarvisTTS {
     return engine
   }
 
-  static func fromPretrained(model: String = MarvisEngine.ModelVariant.default.repoId, progressHandler: @escaping (Progress) -> Void) async throws -> MarvisTTS {
+  static func fromPretrained(model: String = MarvisEngine.ModelVariant.default.repoId, progressHandler: @escaping (Progress) -> Void) async throws -> MarvisOrchestrator {
     let (args, prompts, weightFileURL) = try await snapshotAndConfig(repoId: model, progressHandler: progressHandler)
-    let modelInstance = try await MarvisTTS(config: args, repoId: model, promptURLs: prompts, progressHandler: progressHandler)
+    let modelInstance = try await MarvisOrchestrator(config: args, repoId: model, promptURLs: prompts, progressHandler: progressHandler)
     try modelInstance.installWeights(args: args, weightFileURL: weightFileURL)
     return modelInstance
   }
@@ -401,18 +406,18 @@ private extension MarvisTTS {
           break
         }
       }
-      guard let refAudioURL else { throw MarvisTTSError.voiceNotFound }
+      guard let refAudioURL else { throw MarvisOrchestratorError.voiceNotFound }
 
       let (sampleRate, audio) = try loadAudioArray(from: refAudioURL)
       guard abs(sampleRate - 24000) < .leastNonzeroMagnitude else {
-        throw MarvisTTSError.invalidRefAudio("Reference audio must be single-channel (mono) 24kHz, in WAV format.")
+        throw MarvisOrchestratorError.invalidRefAudio("Reference audio must be single-channel (mono) 24kHz, in WAV format.")
       }
       let refTextURL = refAudioURL.deletingPathExtension().appendingPathExtension("txt")
       let text = try String(data: Data(contentsOf: refTextURL), encoding: .utf8)
-      guard let text else { throw MarvisTTSError.voiceNotFound }
+      guard let text else { throw MarvisOrchestratorError.voiceNotFound }
       return Segment(speaker: 0, text: text, audio: audio)
     }
-    throw MarvisTTSError.voiceNotFound
+    throw MarvisOrchestratorError.voiceNotFound
   }
 
   // MARK: - Core Generation
@@ -428,7 +433,7 @@ private extension MarvisTTS {
     onStreamingResult: (@Sendable (GenerationResult) -> Void)?,
   ) throws -> [GenerationResult] {
     guard voice != nil || refAudio != nil else {
-      throw MarvisTTSError.invalidArgument("`voice` or `refAudio`/`refText` must be specified.")
+      throw MarvisOrchestratorError.invalidArgument("`voice` or `refAudio`/`refText` must be specified.")
     }
 
     let base = try makeContext(voice: voice, refAudio: refAudio, refText: refText)
@@ -630,7 +635,7 @@ private struct Segment {
   }
 }
 
-enum MarvisTTSError: Error, LocalizedError {
+enum MarvisOrchestratorError: Error, LocalizedError {
   case invalidArgument(String)
   case voiceNotFound
   case invalidRefAudio(String)

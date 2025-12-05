@@ -2,27 +2,26 @@
 //  NoiseBlock.swift
 //  MLXAudio
 //
-//  Created by Ben Harraway on 14/05/2025.
+//  NoiseBlock for SNAC decoder - adds learned noise modulation
 //
 import Foundation
 import MLX
 import MLXNN
 
-struct NoiseBlock {
-  let linear: ConvWeighted
+/// NoiseBlock for SNAC decoder - adds learned noise modulation
+/// Weight keys: linear.weight_g, linear.weight_v
+class SNACNoiseBlock: Module {
+  @ModuleInfo var linear: WNConv1d
 
-  init(dim _: Int, weights: [String: MLXArray], basePath: String) {
-    // Load weights for the linear layer within NoiseBlock
-    // Example basePath: "decoder.model.layers.1.block.layers.1.linear"
-    let weightG = weights["\(basePath).weight_g"]!
-    let weightV = weights["\(basePath).weight_v"]!
+  init(dim: Int) {
+    // WNConv1d for noise modulation - outputs 1 channel for noise scaling
     // Bias is false in Python implementation for NoiseBlock's WNConv1d
-    linear = ConvWeighted(
-      weightG: weightG,
-      weightV: weightV,
-      bias: nil, // No bias in Python's NoiseBlock WNConv1d
-      padding: 0, // Padding should be 0 for kernel size 1
-      // stride, dilation, groups default to 1
+    _linear.wrappedValue = WNConv1d(
+      inChannels: dim,
+      outChannels: 1,
+      kernelSize: 1,
+      padding: 0,
+      bias: false,
     )
   }
 
@@ -35,7 +34,7 @@ struct NoiseBlock {
     let noise = MLXRandom.normal([B, 1, T])
 
     // Apply the linear transformation
-    let h = linear(x, conv: MLX.conv1d)
+    let h = linear(x)
 
     // Modulate noise by the linear output and add to input
     let n = noise * h

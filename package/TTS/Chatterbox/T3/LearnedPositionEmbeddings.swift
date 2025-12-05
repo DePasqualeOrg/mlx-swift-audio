@@ -11,10 +11,10 @@ import MLXNN
 import MLXRandom
 
 /// Learned position embeddings for T3 model
-public class LearnedPositionEmbeddings: Module {
+class LearnedPositionEmbeddings: Module {
   @ModuleInfo(key: "emb") var emb: Embedding
 
-  public init(seqLen: Int, modelDim: Int, initScale: Float = 0.02) {
+  init(seqLen: Int, modelDim: Int, initScale: Float = 0.02) {
     _emb.wrappedValue = Embedding(embeddingCount: seqLen, dimensions: modelDim)
     super.init()
 
@@ -27,7 +27,7 @@ public class LearnedPositionEmbeddings: Module {
   ///
   /// - Parameter x: Input tensor of shape (B, T, ...)
   /// - Returns: Positional embeddings of shape (T, model_dim)
-  public func callAsFunction(_ x: MLXArray) -> MLXArray {
+  func callAsFunction(_ x: MLXArray) -> MLXArray {
     let sl = x.shape[1]
     return emb(MLXArray(0 ..< sl))
   }
@@ -36,7 +36,7 @@ public class LearnedPositionEmbeddings: Module {
   ///
   /// - Parameter idx: Scalar int for a specific position
   /// - Returns: Positional embeddings of shape (1, 1, dim)
-  public func getFixedEmbedding(_ idx: Int) -> MLXArray {
+  func getFixedEmbedding(_ idx: Int) -> MLXArray {
     let idxArray = MLXArray([Int32(idx)]).reshaped([1, 1])
     return emb(idxArray) // (1, 1, dim)
   }
@@ -45,7 +45,7 @@ public class LearnedPositionEmbeddings: Module {
   ///
   /// - Parameter idx: Array of indices
   /// - Returns: Positional embeddings
-  public func getFixedEmbedding(_ idx: MLXArray) -> MLXArray {
+  func getFixedEmbedding(_ idx: MLXArray) -> MLXArray {
     var idxReshaped = idx
     if idx.ndim == 1 {
       idxReshaped = idx.expandedDimensions(axis: 0)

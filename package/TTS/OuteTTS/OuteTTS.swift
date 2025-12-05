@@ -1,5 +1,5 @@
 //
-//  OuteTTSSession.swift
+//  OuteTTS.swift
 //  MLXAudio
 //
 //  Ported from: mlx_audio/tts/models/outetts/outetts.py
@@ -81,12 +81,12 @@ struct OuteTTSGenerationResult: Sendable {
   }
 }
 
-// MARK: - OuteTTS Engine
+// MARK: - OuteTTS
 
-actor OuteTTSSession {
+actor OuteTTS {
   private let config: OuteTTSConfig
 
-  private nonisolated(unsafe) var model: OuteTTSLlamaModel?
+  private nonisolated(unsafe) var model: OuteTTSLMHeadModel?
   private nonisolated(unsafe) var tokenizer: (any Tokenizer)?
   private nonisolated(unsafe) var audioProcessor: OuteTTSAudioProcessor?
   private nonisolated(unsafe) var promptProcessor: OuteTTSPromptProcessor?
@@ -139,7 +139,7 @@ actor OuteTTSSession {
   private static func loadOuteTTSModel(
     modelId: String,
     progressHandler: @escaping @Sendable (Progress) -> Void,
-  ) async throws -> (OuteTTSLlamaModel, any Tokenizer) {
+  ) async throws -> (OuteTTSLMHeadModel, any Tokenizer) {
     // Download model files using MLXLMCommon's download helper
     let configuration = ModelConfiguration(id: modelId, extraEOSTokens: ["<|im_end|>"])
     let modelDirectory = try await downloadModel(
@@ -191,8 +191,8 @@ actor OuteTTSSession {
       throw OuteTTSEngineError.generationFailed("Unsupported model type: \(baseConfig.modelType)")
     }
 
-    let llamaConfig = try JSONDecoder().decode(OuteTTSLlamaConfiguration.self, from: configData)
-    let model = OuteTTSLlamaModel(llamaConfig)
+    let llamaConfig = try JSONDecoder().decode(OuteTTSModelConfig.self, from: configData)
+    let model = OuteTTSLMHeadModel(llamaConfig)
 
     // Load weights from safetensor files
     var weights = [String: MLXArray]()

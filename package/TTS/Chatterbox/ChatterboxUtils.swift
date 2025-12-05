@@ -14,7 +14,7 @@ import MLX
 ///   - x: Input array
 ///   - axis: Axis to reverse along (negative values count from end)
 /// - Returns: Array with elements reversed along the specified axis
-public func reverseAlongAxis(_ x: MLXArray, axis: Int) -> MLXArray {
+func reverseAlongAxis(_ x: MLXArray, axis: Int) -> MLXArray {
   let actualAxis = axis < 0 ? x.ndim + axis : axis
   let size = x.shape[actualAxis]
   // Create reversed indices using MLX operations (avoid Swift array allocation)

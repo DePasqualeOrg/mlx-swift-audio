@@ -1,5 +1,5 @@
 //
-//  Decoder.swift
+//  S3GenDecoder.swift
 //  MLXAudio
 //
 //  Ported from mlx_audio/tts/models/chatterbox/s3gen/decoder.py
@@ -13,357 +13,355 @@ import MLXNN
 // MARK: - CausalConv1d
 
 /// Causal 1D convolution with left padding
-public class CausalConv1d: Module {
-    @ModuleInfo(key: "conv") var conv: Conv1d
-    let causalPadding: Int
+class CausalConv1d: Module {
+  @ModuleInfo(key: "conv") var conv: Conv1d
+  let causalPadding: Int
 
-    public init(
-        inChannels: Int,
-        outChannels: Int,
-        kernelSize: Int,
-        stride: Int = 1,
-        dilation: Int = 1,
-        bias: Bool = true
-    ) {
-        precondition(stride == 1, "CausalConv1d only supports stride=1")
-        self._conv.wrappedValue = Conv1d(
-            inputChannels: inChannels,
-            outputChannels: outChannels,
-            kernelSize: kernelSize,
-            stride: stride,
-            padding: 0,
-            dilation: dilation,
-            bias: bias
-        )
-        self.causalPadding = kernelSize - 1
-    }
+  init(
+    inChannels: Int,
+    outChannels: Int,
+    kernelSize: Int,
+    stride: Int = 1,
+    dilation: Int = 1,
+    bias: Bool = true,
+  ) {
+    precondition(stride == 1, "CausalConv1d only supports stride=1")
+    _conv.wrappedValue = Conv1d(
+      inputChannels: inChannels,
+      outputChannels: outChannels,
+      kernelSize: kernelSize,
+      stride: stride,
+      padding: 0,
+      dilation: dilation,
+      bias: bias,
+    )
+    causalPadding = kernelSize - 1
+  }
 
-    public func callAsFunction(_ x: MLXArray) -> MLXArray {
-        // x: (B, C, T) - PyTorch format
-        var out = x.swappedAxes(1, 2)  // (B, C, T) -> (B, T, C)
-        // Pad on the left for causal convolution
-        out = MLX.padded(out, widths: [IntOrPair(0), IntOrPair((causalPadding, 0)), IntOrPair(0)])
-        out = conv(out)
-        out = out.swappedAxes(1, 2)  // (B, T, C) -> (B, C, T)
-        return out
-    }
+  func callAsFunction(_ x: MLXArray) -> MLXArray {
+    // x: (B, C, T) - PyTorch format
+    var out = x.swappedAxes(1, 2) // (B, C, T) -> (B, T, C)
+    // Pad on the left for causal convolution
+    out = MLX.padded(out, widths: [IntOrPair(0), IntOrPair((causalPadding, 0)), IntOrPair(0)])
+    out = conv(out)
+    out = out.swappedAxes(1, 2) // (B, T, C) -> (B, C, T)
+    return out
+  }
 }
 
 // MARK: - CausalBlock1D
 
 /// Causal 1D block with LayerNorm
-public class CausalBlock1D: Module {
-    @ModuleInfo(key: "conv") var conv: CausalConv1d
-    @ModuleInfo(key: "norm") var norm: LayerNorm
+class CausalBlock1D: Module {
+  @ModuleInfo(key: "conv") var conv: CausalConv1d
+  @ModuleInfo(key: "norm") var norm: LayerNorm
 
-    public init(dim: Int, dimOut: Int) {
-        self._conv.wrappedValue = CausalConv1d(inChannels: dim, outChannels: dimOut, kernelSize: 3)
-        self._norm.wrappedValue = LayerNorm(dimensions: dimOut)
-    }
+  init(dim: Int, dimOut: Int) {
+    _conv.wrappedValue = CausalConv1d(inChannels: dim, outChannels: dimOut, kernelSize: 3)
+    _norm.wrappedValue = LayerNorm(dimensions: dimOut)
+  }
 
-    public func callAsFunction(_ x: MLXArray, mask: MLXArray) -> MLXArray {
-        var output = conv(x * mask)
-        // Transpose to (B, T, C), apply LayerNorm, transpose back
-        output = output.swappedAxes(1, 2)  // (B, C, T) -> (B, T, C)
-        output = norm(output)
-        output = output.swappedAxes(1, 2)  // (B, T, C) -> (B, C, T)
-        output = mish(output)
-        return output * mask
-    }
+  func callAsFunction(_ x: MLXArray, mask: MLXArray) -> MLXArray {
+    var output = conv(x * mask)
+    // Transpose to (B, T, C), apply LayerNorm, transpose back
+    output = output.swappedAxes(1, 2) // (B, C, T) -> (B, T, C)
+    output = norm(output)
+    output = output.swappedAxes(1, 2) // (B, T, C) -> (B, C, T)
+    output = mish(output)
+    return output * mask
+  }
 }
 
 // MARK: - CausalResnetBlock1D
 
 /// Causal ResNet block
-public class CausalResnetBlock1D: Module {
-    @ModuleInfo(key: "mlp_linear") var mlpLinear: Linear
-    @ModuleInfo(key: "block1") var block1: CausalBlock1D
-    @ModuleInfo(key: "block2") var block2: CausalBlock1D
-    @ModuleInfo(key: "res_conv") var resConv: Conv1d
+class CausalResnetBlock1D: Module {
+  @ModuleInfo(key: "mlp_linear") var mlpLinear: Linear
+  @ModuleInfo(key: "block1") var block1: CausalBlock1D
+  @ModuleInfo(key: "block2") var block2: CausalBlock1D
+  @ModuleInfo(key: "res_conv") var resConv: Conv1d
 
-    public init(dim: Int, dimOut: Int, timeEmbDim: Int, groups: Int = 8) {
-        self._mlpLinear.wrappedValue = Linear(timeEmbDim, dimOut)
-        self._block1.wrappedValue = CausalBlock1D(dim: dim, dimOut: dimOut)
-        self._block2.wrappedValue = CausalBlock1D(dim: dimOut, dimOut: dimOut)
-        self._resConv.wrappedValue = Conv1d(inputChannels: dim, outputChannels: dimOut, kernelSize: 1)
-    }
+  init(dim: Int, dimOut: Int, timeEmbDim: Int, groups _: Int = 8) {
+    _mlpLinear.wrappedValue = Linear(timeEmbDim, dimOut)
+    _block1.wrappedValue = CausalBlock1D(dim: dim, dimOut: dimOut)
+    _block2.wrappedValue = CausalBlock1D(dim: dimOut, dimOut: dimOut)
+    _resConv.wrappedValue = Conv1d(inputChannels: dim, outputChannels: dimOut, kernelSize: 1)
+  }
 
-    public func callAsFunction(_ x: MLXArray, mask: MLXArray, timeEmb: MLXArray) -> MLXArray {
-        var h = block1(x, mask: mask)
-        h = h + mlpLinear(mish(timeEmb)).expandedDimensions(axis: -1)
-        h = block2(h, mask: mask)
+  func callAsFunction(_ x: MLXArray, mask: MLXArray, timeEmb: MLXArray) -> MLXArray {
+    var h = block1(x, mask: mask)
+    h = h + mlpLinear(mish(timeEmb)).expandedDimensions(axis: -1)
+    h = block2(h, mask: mask)
 
-        // res_conv
-        var xRes = (x * mask).swappedAxes(1, 2)
-        xRes = resConv(xRes)
-        xRes = xRes.swappedAxes(1, 2)
+    // res_conv
+    var xRes = (x * mask).swappedAxes(1, 2)
+    xRes = resConv(xRes)
+    xRes = xRes.swappedAxes(1, 2)
 
-        return h + xRes
-    }
+    return h + xRes
+  }
 }
 
 // MARK: - Block Containers
 
 /// Container for down block components
-public class DownBlock: Module {
-    @ModuleInfo(key: "resnet") var resnet: CausalResnetBlock1D
-    @ModuleInfo(key: "transformers") var transformers: [BasicTransformerBlock]
-    @ModuleInfo(key: "downsample") var downsample: Module
+class DownBlock: Module {
+  @ModuleInfo(key: "resnet") var resnet: CausalResnetBlock1D
+  @ModuleInfo(key: "transformers") var transformers: [BasicTransformerBlock]
+  @ModuleInfo(key: "downsample") var downsample: Module
 
-    public init(resnet: CausalResnetBlock1D, transformerBlocks: [BasicTransformerBlock], downsample: Module) {
-        self._resnet.wrappedValue = resnet
-        self._transformers.wrappedValue = transformerBlocks
-        self._downsample.wrappedValue = downsample
-    }
+  init(resnet: CausalResnetBlock1D, transformerBlocks: [BasicTransformerBlock], downsample: Module) {
+    _resnet.wrappedValue = resnet
+    _transformers.wrappedValue = transformerBlocks
+    _downsample.wrappedValue = downsample
+  }
 }
 
 /// Container for mid block components
-public class MidBlock: Module {
-    @ModuleInfo(key: "resnet") var resnet: CausalResnetBlock1D
-    @ModuleInfo(key: "transformers") var transformers: [BasicTransformerBlock]
+class MidBlock: Module {
+  @ModuleInfo(key: "resnet") var resnet: CausalResnetBlock1D
+  @ModuleInfo(key: "transformers") var transformers: [BasicTransformerBlock]
 
-    public init(resnet: CausalResnetBlock1D, transformerBlocks: [BasicTransformerBlock]) {
-        self._resnet.wrappedValue = resnet
-        self._transformers.wrappedValue = transformerBlocks
-    }
+  init(resnet: CausalResnetBlock1D, transformerBlocks: [BasicTransformerBlock]) {
+    _resnet.wrappedValue = resnet
+    _transformers.wrappedValue = transformerBlocks
+  }
 }
 
 /// Container for up block components
-public class UpBlock: Module {
-    @ModuleInfo(key: "resnet") var resnet: CausalResnetBlock1D
-    @ModuleInfo(key: "transformers") var transformers: [BasicTransformerBlock]
-    @ModuleInfo(key: "upsample") var upsample: Module
+class UpBlock: Module {
+  @ModuleInfo(key: "resnet") var resnet: CausalResnetBlock1D
+  @ModuleInfo(key: "transformers") var transformers: [BasicTransformerBlock]
+  @ModuleInfo(key: "upsample") var upsample: Module
 
-    public init(resnet: CausalResnetBlock1D, transformerBlocks: [BasicTransformerBlock], upsample: Module) {
-        self._resnet.wrappedValue = resnet
-        self._transformers.wrappedValue = transformerBlocks
-        self._upsample.wrappedValue = upsample
-    }
+  init(resnet: CausalResnetBlock1D, transformerBlocks: [BasicTransformerBlock], upsample: Module) {
+    _resnet.wrappedValue = resnet
+    _transformers.wrappedValue = transformerBlocks
+    _upsample.wrappedValue = upsample
+  }
 }
 
 // MARK: - ConditionalDecoder
 
 /// Conditional U-Net decoder for flow matching
-public class ConditionalDecoder: Module {
-    let inChannels: Int
-    let outChannels: Int
-    let causal: Bool
-    let nDownBlocks: Int
-    let nMidBlocks: Int
-    let nUpBlocks: Int
+class ConditionalDecoder: Module {
+  let inChannels: Int
+  let outChannels: Int
+  let causal: Bool
+  let nDownBlocks: Int
+  let nMidBlocks: Int
+  let nUpBlocks: Int
 
-    @ModuleInfo(key: "time_embeddings") var timeEmbeddings: SinusoidalPosEmb
-    @ModuleInfo(key: "time_mlp") var timeMlp: TimestepEmbedding
-    @ModuleInfo(key: "down_blocks") var downBlocks: [DownBlock]
-    @ModuleInfo(key: "mid_blocks") var midBlocks: [MidBlock]
-    @ModuleInfo(key: "up_blocks") var upBlocks: [UpBlock]
-    @ModuleInfo(key: "final_block") var finalBlock: CausalBlock1D
-    @ModuleInfo(key: "final_proj") var finalProj: Conv1d
+  @ModuleInfo(key: "time_embeddings") var timeEmbeddings: SinusoidalPosEmb
+  @ModuleInfo(key: "time_mlp") var timeMlp: TimestepEmbedding
+  @ModuleInfo(key: "down_blocks") var downBlocks: [DownBlock]
+  @ModuleInfo(key: "mid_blocks") var midBlocks: [MidBlock]
+  @ModuleInfo(key: "up_blocks") var upBlocks: [UpBlock]
+  @ModuleInfo(key: "final_block") var finalBlock: CausalBlock1D
+  @ModuleInfo(key: "final_proj") var finalProj: Conv1d
 
-    public init(
-        inChannels: Int = 320,
-        outChannels: Int = 80,
-        causal: Bool = true,
-        channels: [Int] = [256],
-        dropout: Float = 0.0,
-        attentionHeadDim: Int = 64,
-        nBlocks: Int = 4,
-        numMidBlocks: Int = 12,
-        numHeads: Int = 8,
-        actFn: String = "gelu"
-    ) {
-        self.inChannels = inChannels
-        self.outChannels = outChannels
-        self.causal = causal
+  init(
+    inChannels: Int = 320,
+    outChannels: Int = 80,
+    causal: Bool = true,
+    channels: [Int] = [256],
+    dropout: Float = 0.0,
+    attentionHeadDim: Int = 64,
+    nBlocks: Int = 4,
+    numMidBlocks: Int = 12,
+    numHeads: Int = 8,
+    actFn: String = "gelu",
+  ) {
+    self.inChannels = inChannels
+    self.outChannels = outChannels
+    self.causal = causal
 
-        // Time embeddings
-        self._timeEmbeddings.wrappedValue = SinusoidalPosEmb(dim: inChannels)
-        let timeEmbedDim = channels[0] * 4
-        self._timeMlp.wrappedValue = TimestepEmbedding(inChannels: inChannels, timeEmbedDim: timeEmbedDim, actFn: "silu")
+    // Time embeddings
+    _timeEmbeddings.wrappedValue = SinusoidalPosEmb(dim: inChannels)
+    let timeEmbedDim = channels[0] * 4
+    _timeMlp.wrappedValue = TimestepEmbedding(inChannels: inChannels, timeEmbedDim: timeEmbedDim, actFn: "silu")
 
-        // Down blocks
-        var downBlocksArray: [DownBlock] = []
-        var outputChannel = inChannels
-        for (i, ch) in channels.enumerated() {
-            let inputChannel = outputChannel
-            outputChannel = ch
-            let isLast = i == channels.count - 1
+    // Down blocks
+    var downBlocksArray: [DownBlock] = []
+    var outputChannel = inChannels
+    for (i, ch) in channels.enumerated() {
+      let inputChannel = outputChannel
+      outputChannel = ch
+      let isLast = i == channels.count - 1
 
-            let resnet = CausalResnetBlock1D(dim: inputChannel, dimOut: outputChannel, timeEmbDim: timeEmbedDim)
+      let resnet = CausalResnetBlock1D(dim: inputChannel, dimOut: outputChannel, timeEmbDim: timeEmbedDim)
 
-            var transformerBlocks: [BasicTransformerBlock] = []
-            for _ in 0 ..< nBlocks {
-                transformerBlocks.append(BasicTransformerBlock(
-                    dim: outputChannel,
-                    numAttentionHeads: numHeads,
-                    attentionHeadDim: attentionHeadDim,
-                    dropout: dropout,
-                    activationFn: actFn
-                ))
-            }
+      var transformerBlocks: [BasicTransformerBlock] = []
+      for _ in 0 ..< nBlocks {
+        transformerBlocks.append(BasicTransformerBlock(
+          dim: outputChannel,
+          numAttentionHeads: numHeads,
+          attentionHeadDim: attentionHeadDim,
+          dropout: dropout,
+          activationFn: actFn,
+        ))
+      }
 
-            let downsample: Module
-            if !isLast {
-                downsample = Downsample1D(dim: outputChannel)
-            } else {
-                downsample = CausalConv1d(inChannels: outputChannel, outChannels: outputChannel, kernelSize: 3)
-            }
+      let downsample: Module = if !isLast {
+        Downsample1D(dim: outputChannel)
+      } else {
+        CausalConv1d(inChannels: outputChannel, outChannels: outputChannel, kernelSize: 3)
+      }
 
-            downBlocksArray.append(DownBlock(resnet: resnet, transformerBlocks: transformerBlocks, downsample: downsample))
-        }
-        self._downBlocks.wrappedValue = downBlocksArray
-        self.nDownBlocks = channels.count
+      downBlocksArray.append(DownBlock(resnet: resnet, transformerBlocks: transformerBlocks, downsample: downsample))
+    }
+    _downBlocks.wrappedValue = downBlocksArray
+    nDownBlocks = channels.count
 
-        // Mid blocks
-        var midBlocksArray: [MidBlock] = []
-        for _ in 0 ..< numMidBlocks {
-            let resnet = CausalResnetBlock1D(dim: channels.last!, dimOut: channels.last!, timeEmbDim: timeEmbedDim)
-            var transformerBlocks: [BasicTransformerBlock] = []
-            for _ in 0 ..< nBlocks {
-                transformerBlocks.append(BasicTransformerBlock(
-                    dim: channels.last!,
-                    numAttentionHeads: numHeads,
-                    attentionHeadDim: attentionHeadDim,
-                    dropout: dropout,
-                    activationFn: actFn
-                ))
-            }
-            midBlocksArray.append(MidBlock(resnet: resnet, transformerBlocks: transformerBlocks))
-        }
-        self._midBlocks.wrappedValue = midBlocksArray
-        self.nMidBlocks = numMidBlocks
+    // Mid blocks
+    var midBlocksArray: [MidBlock] = []
+    for _ in 0 ..< numMidBlocks {
+      let resnet = CausalResnetBlock1D(dim: channels.last!, dimOut: channels.last!, timeEmbDim: timeEmbedDim)
+      var transformerBlocks: [BasicTransformerBlock] = []
+      for _ in 0 ..< nBlocks {
+        transformerBlocks.append(BasicTransformerBlock(
+          dim: channels.last!,
+          numAttentionHeads: numHeads,
+          attentionHeadDim: attentionHeadDim,
+          dropout: dropout,
+          activationFn: actFn,
+        ))
+      }
+      midBlocksArray.append(MidBlock(resnet: resnet, transformerBlocks: transformerBlocks))
+    }
+    _midBlocks.wrappedValue = midBlocksArray
+    nMidBlocks = numMidBlocks
 
-        // Up blocks
-        var upBlocksArray: [UpBlock] = []
-        var channelsReversed = Array(channels.reversed()) + [channels[0]]
-        for i in 0 ..< (channelsReversed.count - 1) {
-            let inputChannel = channelsReversed[i] * 2
-            let outCh = channelsReversed[i + 1]
-            let isLast = i == channelsReversed.count - 2
+    // Up blocks
+    var upBlocksArray: [UpBlock] = []
+    var channelsReversed = Array(channels.reversed()) + [channels[0]]
+    for i in 0 ..< (channelsReversed.count - 1) {
+      let inputChannel = channelsReversed[i] * 2
+      let outCh = channelsReversed[i + 1]
+      let isLast = i == channelsReversed.count - 2
 
-            let resnet = CausalResnetBlock1D(dim: inputChannel, dimOut: outCh, timeEmbDim: timeEmbedDim)
+      let resnet = CausalResnetBlock1D(dim: inputChannel, dimOut: outCh, timeEmbDim: timeEmbedDim)
 
-            var transformerBlocks: [BasicTransformerBlock] = []
-            for _ in 0 ..< nBlocks {
-                transformerBlocks.append(BasicTransformerBlock(
-                    dim: outCh,
-                    numAttentionHeads: numHeads,
-                    attentionHeadDim: attentionHeadDim,
-                    dropout: dropout,
-                    activationFn: actFn
-                ))
-            }
+      var transformerBlocks: [BasicTransformerBlock] = []
+      for _ in 0 ..< nBlocks {
+        transformerBlocks.append(BasicTransformerBlock(
+          dim: outCh,
+          numAttentionHeads: numHeads,
+          attentionHeadDim: attentionHeadDim,
+          dropout: dropout,
+          activationFn: actFn,
+        ))
+      }
 
-            let upsample: Module
-            if !isLast {
-                upsample = MatchaUpsample1D(channels: outCh, useConvTranspose: true)
-            } else {
-                upsample = CausalConv1d(inChannels: outCh, outChannels: outCh, kernelSize: 3)
-            }
+      let upsample: Module = if !isLast {
+        MatchaUpsample1D(channels: outCh, useConvTranspose: true)
+      } else {
+        CausalConv1d(inChannels: outCh, outChannels: outCh, kernelSize: 3)
+      }
 
-            upBlocksArray.append(UpBlock(resnet: resnet, transformerBlocks: transformerBlocks, upsample: upsample))
-        }
-        self._upBlocks.wrappedValue = upBlocksArray
-        self.nUpBlocks = channelsReversed.count - 1
+      upBlocksArray.append(UpBlock(resnet: resnet, transformerBlocks: transformerBlocks, upsample: upsample))
+    }
+    _upBlocks.wrappedValue = upBlocksArray
+    nUpBlocks = channelsReversed.count - 1
 
-        // Final layers
-        self._finalBlock.wrappedValue = CausalBlock1D(dim: channelsReversed.last!, dimOut: channelsReversed.last!)
-        self._finalProj.wrappedValue = Conv1d(inputChannels: channelsReversed.last!, outputChannels: outChannels, kernelSize: 1)
+    // Final layers
+    _finalBlock.wrappedValue = CausalBlock1D(dim: channelsReversed.last!, dimOut: channelsReversed.last!)
+    _finalProj.wrappedValue = Conv1d(inputChannels: channelsReversed.last!, outputChannels: outChannels, kernelSize: 1)
+  }
+
+  func callAsFunction(
+    x: MLXArray,
+    mask: MLXArray,
+    mu: MLXArray,
+    t: MLXArray,
+    spks: MLXArray? = nil,
+    cond: MLXArray? = nil,
+  ) -> MLXArray {
+    // Time embedding
+    var tEmb = timeEmbeddings(t)
+    tEmb = timeMlp(tEmb)
+
+    // Concatenate conditioning
+    var h = MLX.concatenated([x, mu], axis: 1)
+    if let s = spks {
+      let spksExpanded = MLX.broadcast(
+        s.expandedDimensions(axis: -1),
+        to: [s.shape[0], s.shape[1], h.shape[2]],
+      )
+      h = MLX.concatenated([h, spksExpanded], axis: 1)
+    }
+    if let c = cond {
+      h = MLX.concatenated([h, c], axis: 1)
     }
 
-    public func callAsFunction(
-        x: MLXArray,
-        mask: MLXArray,
-        mu: MLXArray,
-        t: MLXArray,
-        spks: MLXArray? = nil,
-        cond: MLXArray? = nil
-    ) -> MLXArray {
-        // Time embedding
-        var tEmb = timeEmbeddings(t)
-        tEmb = timeMlp(tEmb)
+    // Down blocks
+    var hiddens: [MLXArray] = []
+    var masks: [MLXArray] = [mask]
+    for downBlock in downBlocks {
+      let maskDown = masks.last!
+      h = downBlock.resnet(h, mask: maskDown, timeEmb: tEmb)
 
-        // Concatenate conditioning
-        var h = MLX.concatenated([x, mu], axis: 1)
-        if let s = spks {
-            let spksExpanded = MLX.broadcast(
-                s.expandedDimensions(axis: -1),
-                to: [s.shape[0], s.shape[1], h.shape[2]]
-            )
-            h = MLX.concatenated([h, spksExpanded], axis: 1)
-        }
-        if let c = cond {
-            h = MLX.concatenated([h, c], axis: 1)
-        }
+      // Transformer blocks
+      var hT = h.swappedAxes(1, 2) // (B, C, T) -> (B, T, C)
+      for transformer in downBlock.transformers {
+        hT = transformer(hT, attentionMask: nil, timestep: tEmb)
+      }
+      h = hT.swappedAxes(1, 2) // (B, T, C) -> (B, C, T)
 
-        // Down blocks
-        var hiddens: [MLXArray] = []
-        var masks: [MLXArray] = [mask]
-        for downBlock in downBlocks {
-            let maskDown = masks.last!
-            h = downBlock.resnet(h, mask: maskDown, timeEmb: tEmb)
+      hiddens.append(h)
 
-            // Transformer blocks
-            var hT = h.swappedAxes(1, 2)  // (B, C, T) -> (B, T, C)
-            for transformer in downBlock.transformers {
-                hT = transformer(hT, attentionMask: nil, timestep: tEmb)
-            }
-            h = hT.swappedAxes(1, 2)  // (B, T, C) -> (B, C, T)
-
-            hiddens.append(h)
-
-            // Apply downsample
-            if let ds = downBlock.downsample as? Downsample1D {
-                h = ds(h * maskDown)
-            } else if let ds = downBlock.downsample as? CausalConv1d {
-                h = ds(h * maskDown)
-            }
-            // Downsample mask
-            masks.append(maskDown[0..., 0..., (.stride(by: 2))])
-        }
-
-        masks.removeLast()
-        let maskMid = masks.last!
-
-        // Mid blocks
-        for midBlock in midBlocks {
-            h = midBlock.resnet(h, mask: maskMid, timeEmb: tEmb)
-
-            var hT = h.swappedAxes(1, 2)
-            for transformer in midBlock.transformers {
-                hT = transformer(hT, attentionMask: nil, timestep: tEmb)
-            }
-            h = hT.swappedAxes(1, 2)
-        }
-
-        // Up blocks
-        var maskUp = mask
-        for upBlock in upBlocks {
-            maskUp = masks.removeLast()
-            let skip = hiddens.removeLast()
-            // Truncate h to match skip length
-            h = MLX.concatenated([h[0..., 0..., 0 ..< skip.shape[2]], skip], axis: 1)
-            h = upBlock.resnet(h, mask: maskUp, timeEmb: tEmb)
-
-            var hT = h.swappedAxes(1, 2)
-            for transformer in upBlock.transformers {
-                hT = transformer(hT, attentionMask: nil, timestep: tEmb)
-            }
-            h = hT.swappedAxes(1, 2)
-
-            // Apply upsample
-            if let us = upBlock.upsample as? MatchaUpsample1D {
-                h = us(h * maskUp)
-            } else if let us = upBlock.upsample as? CausalConv1d {
-                h = us(h * maskUp)
-            }
-        }
-
-        // Final layers
-        h = finalBlock(h, mask: maskUp)
-        var output = (h * maskUp).swappedAxes(1, 2)
-        output = finalProj(output)
-        output = output.swappedAxes(1, 2)
-        return output * mask
+      // Apply downsample
+      if let ds = downBlock.downsample as? Downsample1D {
+        h = ds(h * maskDown)
+      } else if let ds = downBlock.downsample as? CausalConv1d {
+        h = ds(h * maskDown)
+      }
+      // Downsample mask
+      masks.append(maskDown[0..., 0..., .stride(by: 2)])
     }
+
+    masks.removeLast()
+    let maskMid = masks.last!
+
+    // Mid blocks
+    for midBlock in midBlocks {
+      h = midBlock.resnet(h, mask: maskMid, timeEmb: tEmb)
+
+      var hT = h.swappedAxes(1, 2)
+      for transformer in midBlock.transformers {
+        hT = transformer(hT, attentionMask: nil, timestep: tEmb)
+      }
+      h = hT.swappedAxes(1, 2)
+    }
+
+    // Up blocks
+    var maskUp = mask
+    for upBlock in upBlocks {
+      maskUp = masks.removeLast()
+      let skip = hiddens.removeLast()
+      // Truncate h to match skip length
+      h = MLX.concatenated([h[0..., 0..., 0 ..< skip.shape[2]], skip], axis: 1)
+      h = upBlock.resnet(h, mask: maskUp, timeEmb: tEmb)
+
+      var hT = h.swappedAxes(1, 2)
+      for transformer in upBlock.transformers {
+        hT = transformer(hT, attentionMask: nil, timestep: tEmb)
+      }
+      h = hT.swappedAxes(1, 2)
+
+      // Apply upsample
+      if let us = upBlock.upsample as? MatchaUpsample1D {
+        h = us(h * maskUp)
+      } else if let us = upBlock.upsample as? CausalConv1d {
+        h = us(h * maskUp)
+      }
+    }
+
+    // Final layers
+    h = finalBlock(h, mask: maskUp)
+    var output = (h * maskUp).swappedAxes(1, 2)
+    output = finalProj(output)
+    output = output.swappedAxes(1, 2)
+    return output * mask
+  }
 }

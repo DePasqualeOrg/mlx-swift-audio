@@ -61,9 +61,9 @@ func weightNorm(
 
 /// Conv1d with weight normalization
 class ConvWeighted: Module {
-  var weightG: MLXArray
-  var weightV: MLXArray
-  var bias: MLXArray?
+  @ModuleInfo(key: "weight_g") var weightG: MLXArray
+  @ModuleInfo(key: "weight_v") var weightV: MLXArray
+  @ModuleInfo var bias: MLXArray?
 
   let stride: Int
   let padding: Int
@@ -71,30 +71,29 @@ class ConvWeighted: Module {
   let groups: Int
 
   init(
-    weightG: MLXArray,
-    weightV: MLXArray,
-    bias: MLXArray?,
+    inChannels: Int = 0,
+    outChannels: Int = 0,
+    kernelSize: Int = 1,
     stride: Int = 1,
     padding: Int = 1,
     dilation: Int = 1,
     groups: Int = 1,
+    bias: Bool = true,
   ) {
     self.stride = stride
     self.padding = padding
     self.dilation = dilation
     self.groups = groups
 
-    // Store parameters
-    self.weightG = weightG
-    self.weightV = weightV
-    self.bias = bias
-
-    super.init()
+    // Initialize with zeros - will be replaced by weight loading
+    _weightG.wrappedValue = MLXArray.zeros([outChannels, 1, 1])
+    _weightV.wrappedValue = MLXArray.zeros([outChannels, kernelSize, inChannels / groups])
+    _bias.wrappedValue = bias ? MLXArray.zeros([outChannels]) : nil
   }
 
   func callAsFunction(_ x: MLXArray, conv: (MLXArray, MLXArray, Int, Int, Int, Int, StreamOrDevice) -> MLXArray) -> MLXArray {
     let weight = weightNorm(weightV: weightV, weightG: weightG, dim: 0)
-    bias = bias?.reshaped([1, 1, -1])
+    let biasReshaped = bias?.reshaped([1, 1, -1])
 
     func applyConv(x: MLXArray, weightToUse: MLXArray) -> MLXArray {
       let result = conv(
@@ -107,8 +106,8 @@ class ConvWeighted: Module {
         .default,
       )
 
-      if let bias {
-        return result + bias
+      if let biasReshaped {
+        return result + biasReshaped
       }
       return result
     }

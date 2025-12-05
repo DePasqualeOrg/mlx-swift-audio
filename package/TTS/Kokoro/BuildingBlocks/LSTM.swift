@@ -5,56 +5,45 @@ import Foundation
 import MLX
 import MLXNN
 
-class LSTM: Module {
+/// Bidirectional LSTM module with proper @ModuleInfo weight mapping
+class BiLSTM: Module {
   let inputSize: Int
   let hiddenSize: Int
   let hasBias: Bool
   let batchFirst: Bool
 
   // Forward direction weights and biases
-  var wxForward: MLXArray
-  var whForward: MLXArray
-  var biasIhForward: MLXArray?
-  var biasHhForward: MLXArray?
+  @ModuleInfo(key: "weight_ih_l0") var weightIhL0: MLXArray
+  @ModuleInfo(key: "weight_hh_l0") var weightHhL0: MLXArray
+  @ModuleInfo(key: "bias_ih_l0") var biasIhL0: MLXArray?
+  @ModuleInfo(key: "bias_hh_l0") var biasHhL0: MLXArray?
 
   // Backward direction weights and biases
-  var wxBackward: MLXArray
-  var whBackward: MLXArray
-  var biasIhBackward: MLXArray?
-  var biasHhBackward: MLXArray?
+  @ModuleInfo(key: "weight_ih_l0_reverse") var weightIhL0Reverse: MLXArray
+  @ModuleInfo(key: "weight_hh_l0_reverse") var weightHhL0Reverse: MLXArray
+  @ModuleInfo(key: "bias_ih_l0_reverse") var biasIhL0Reverse: MLXArray?
+  @ModuleInfo(key: "bias_hh_l0_reverse") var biasHhL0Reverse: MLXArray?
 
-  init(
-    inputSize: Int,
-    hiddenSize: Int,
-    bias: Bool = true,
-    batchFirst: Bool = true,
-    wxForward: MLXArray,
-    whForward: MLXArray,
-    biasIhForward: MLXArray? = nil,
-    biasHhForward: MLXArray? = nil,
-    wxBackward: MLXArray,
-    whBackward: MLXArray,
-    biasIhBackward: MLXArray? = nil,
-    biasHhBackward: MLXArray? = nil,
-  ) {
+  init(inputSize: Int, hiddenSize: Int, bias: Bool = true, batchFirst: Bool = true) {
     self.inputSize = inputSize
     self.hiddenSize = hiddenSize
     hasBias = bias
     self.batchFirst = batchFirst
 
-    // Forward direction weights and biases
-    self.wxForward = wxForward
-    self.whForward = whForward
-    self.biasIhForward = biasIhForward
-    self.biasHhForward = biasHhForward
+    // Initialize with zeros - will be replaced by weight loading
+    let weightShape = [4 * hiddenSize, inputSize]
+    let hiddenWeightShape = [4 * hiddenSize, hiddenSize]
+    let biasShape = [4 * hiddenSize]
 
-    // Backward direction weights and biases
-    self.wxBackward = wxBackward
-    self.whBackward = whBackward
-    self.biasIhBackward = biasIhBackward
-    self.biasHhBackward = biasHhBackward
+    _weightIhL0.wrappedValue = MLXArray.zeros(weightShape)
+    _weightHhL0.wrappedValue = MLXArray.zeros(hiddenWeightShape)
+    _biasIhL0.wrappedValue = bias ? MLXArray.zeros(biasShape) : nil
+    _biasHhL0.wrappedValue = bias ? MLXArray.zeros(biasShape) : nil
 
-    super.init()
+    _weightIhL0Reverse.wrappedValue = MLXArray.zeros(weightShape)
+    _weightHhL0Reverse.wrappedValue = MLXArray.zeros(hiddenWeightShape)
+    _biasIhL0Reverse.wrappedValue = bias ? MLXArray.zeros(biasShape) : nil
+    _biasHhL0Reverse.wrappedValue = bias ? MLXArray.zeros(biasShape) : nil
   }
 
   /// Process sequence in forward direction
@@ -64,14 +53,14 @@ class LSTM: Module {
     cell: MLXArray? = nil,
   ) -> (MLXArray, MLXArray) {
     // Pre-compute input projections
-    let xProj: MLXArray = if let biasIhForward, let biasHhForward {
+    let xProj: MLXArray = if let biasIhL0, let biasHhL0 {
       MLX.addMM(
-        biasIhForward + biasHhForward,
+        biasIhL0 + biasHhL0,
         x,
-        wxForward.transposed(),
+        weightIhL0.transposed(),
       )
     } else {
-      MLX.matmul(x, wxForward.transposed())
+      MLX.matmul(x, weightIhL0.transposed())
     }
 
     var allHidden: [MLXArray] = []
@@ -85,7 +74,7 @@ class LSTM: Module {
     // Process sequence in forward direction (0 to seqLen-1)
     for idx in 0 ..< seqLen {
       var ifgo = xProj[0..., idx, 0...]
-      ifgo = ifgo + MLX.matmul(currentHidden, whForward.transposed())
+      ifgo = ifgo + MLX.matmul(currentHidden, weightHhL0.transposed())
 
       // Split gates
       let gates = MLX.split(ifgo, parts: 4, axis: -1)
@@ -111,14 +100,14 @@ class LSTM: Module {
     hidden: MLXArray? = nil,
     cell: MLXArray? = nil,
   ) -> (MLXArray, MLXArray) {
-    let xProj: MLXArray = if let biasIhBackward, let biasHhBackward {
+    let xProj: MLXArray = if let biasIhL0Reverse, let biasHhL0Reverse {
       MLX.addMM(
-        biasIhBackward + biasHhBackward,
+        biasIhL0Reverse + biasHhL0Reverse,
         x,
-        wxBackward.transposed(),
+        weightIhL0Reverse.transposed(),
       )
     } else {
-      MLX.matmul(x, wxBackward.transposed())
+      MLX.matmul(x, weightIhL0Reverse.transposed())
     }
 
     var allHidden: [MLXArray] = []
@@ -132,7 +121,7 @@ class LSTM: Module {
     // Process sequence in backward direction (seqLen-1 to 0)
     for idx in stride(from: seqLen - 1, through: 0, by: -1) {
       var ifgo = xProj[0..., idx, 0...]
-      ifgo = ifgo + MLX.matmul(currentHidden, whBackward.transposed())
+      ifgo = ifgo + MLX.matmul(currentHidden, weightHhL0Reverse.transposed())
 
       // Split gates
       let gates = MLX.split(ifgo, parts: 4, axis: -1)

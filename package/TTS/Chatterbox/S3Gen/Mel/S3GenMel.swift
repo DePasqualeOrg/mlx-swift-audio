@@ -43,7 +43,7 @@ private func reflectPad2D(_ x: MLXArray, padAmount: Int) -> MLXArray {
 ///   - fmax: Maximum frequency (default 8000)
 ///   - center: Whether to center the window (default false)
 /// - Returns: Mel-spectrogram (B, num_mels, T')
-public func s3genMelSpectrogram(
+func s3genMelSpectrogram(
   y: MLXArray,
   nFft: Int = 1920,
   numMels: Int = 80,

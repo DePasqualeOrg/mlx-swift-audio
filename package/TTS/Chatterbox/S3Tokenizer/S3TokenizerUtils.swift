@@ -21,7 +21,7 @@ import MLXNN
 ///   - lengths: Batch of lengths (B,)
 ///   - maxLen: Maximum length. If 0, use the maximum length in batch.
 /// - Returns: Mask tensor containing indices of padded part (B, max_T). 1 for non-padded, 0 for padded.
-public func makeNonPadMask(lengths: MLXArray, maxLen: Int = 0) -> MLXArray {
+func makeNonPadMask(lengths: MLXArray, maxLen: Int = 0) -> MLXArray {
   let batchSize = lengths.shape[0]
   let actualMaxLen = maxLen > 0 ? maxLen : Int(lengths.max().item(Int.self))
   let seqRange = MLXArray(0 ..< actualMaxLen)
@@ -38,7 +38,7 @@ public func makeNonPadMask(lengths: MLXArray, maxLen: Int = 0) -> MLXArray {
 ///   - mask: Boolean mask tensor
 ///   - dtype: Output data type (must be floating point)
 /// - Returns: Attention bias tensor with -1e10 for masked positions
-public func maskToBias(_ mask: MLXArray, dtype: DType = .float32) -> MLXArray {
+func maskToBias(_ mask: MLXArray, dtype: DType = .float32) -> MLXArray {
   let maskFloat = mask.asType(dtype)
   return (1.0 - maskFloat) * -1.0e10
 }
@@ -47,7 +47,7 @@ public func maskToBias(_ mask: MLXArray, dtype: DType = .float32) -> MLXArray {
 ///
 /// - Parameter data: List of arrays, shape of each array (128, T)
 /// - Returns: Tuple of (padded_feats, feats_lengths)
-public func padSequences(_ data: [MLXArray]) -> (MLXArray, MLXArray) {
+func padSequences(_ data: [MLXArray]) -> (MLXArray, MLXArray) {
   let featsLengths = MLXArray(data.map { Int32($0.shape[1]) })
   let maxLen = data.map { $0.shape[1] }.max() ?? 0
   let batchSize = data.count
@@ -71,7 +71,7 @@ public func padSequences(_ data: [MLXArray]) -> (MLXArray, MLXArray) {
 ///   - overlap: Overlapping duration in seconds.
 ///   - tokenRate: Number of tokens per second.
 /// - Returns: A single merged token sequence.
-public func mergeTokenizedSegments(
+func mergeTokenizedSegments(
   _ tokenizedSegments: [[Int]],
   overlap: Int,
   tokenRate: Int,
@@ -102,7 +102,7 @@ public func mergeTokenizedSegments(
 ///   - hopLength: Hop length (default 160)
 ///   - padding: Number of zero samples to pad to the right
 /// - Returns: Log-Mel spectrogram (n_mels, T')
-public func logMelSpectrogram(
+func logMelSpectrogram(
   audio: MLXArray,
   sampleRate: Int = 16000,
   nMels: Int = 128,
@@ -160,7 +160,7 @@ public func logMelSpectrogram(
 ///   - nMels: Number of Mel-frequency filters (default 128)
 ///   - padding: Number of zero samples to pad to the right
 /// - Returns: Log-Mel spectrogram (n_mels, T')
-public func logMelSpectrogramChatterbox(
+func logMelSpectrogramChatterbox(
   audio: MLXArray,
   nMels: Int = 128,
   padding: Int = 0,
@@ -213,7 +213,7 @@ public func logMelSpectrogramChatterbox(
 // MARK: - Helper functions
 
 /// Create a Hanning window
-public func hanningWindow(length: Int) -> MLXArray {
+func hanningWindow(length: Int) -> MLXArray {
   if length == 1 {
     return MLXArray([1.0])
   }
@@ -224,7 +224,7 @@ public func hanningWindow(length: Int) -> MLXArray {
 }
 
 /// Compute STFT of a signal
-public func stft(
+func stft(
   _ x: MLXArray,
   window: MLXArray,
   nFft: Int,
@@ -294,7 +294,7 @@ private func reflectPad(_ x: MLXArray, padding: Int) -> MLXArray {
 }
 
 /// Create mel filterbank
-public func melFilters(
+func melFilters(
   sampleRate: Int,
   nFft: Int,
   nMels: Int,

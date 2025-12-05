@@ -8,7 +8,7 @@ import MLXNN
 class AlbertIntermediate {
   let dense: Linear
 
-  init(config: AlbertModelArgs) {
+  init(config: AlbertConfig) {
     dense = Linear(config.hiddenSize, config.intermediateSize)
   }
 

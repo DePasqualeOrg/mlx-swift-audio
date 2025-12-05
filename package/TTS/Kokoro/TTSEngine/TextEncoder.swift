@@ -5,46 +5,61 @@ import Foundation
 import MLX
 import MLXNN
 
-class TextEncoder {
-  let embedding: Embedding
-  let cnn: [[Module]]
-  let lstm: LSTM
+/// A single CNN block containing ConvWeighted, LayerNormInference, activation, and dropout
+/// Weight keys are remapped in KokoroWeightLoader: 0 → conv, 1 → norm
+class TextEncoderCNNBlock: Module {
+  @ModuleInfo var conv: ConvWeighted
+  @ModuleInfo var norm: LayerNormInference
+  let actv: LeakyReLU
+  let dropout: Dropout
 
-  init(weights: [String: MLXArray], channels: Int, kernelSize: Int, depth: Int, nSymbols _: Int, actv: Module = LeakyReLU(negativeSlope: 0.2)) {
-    embedding = Embedding(weight: weights["text_encoder.embedding.weight"]!)
+  init(channels: Int, kernelSize: Int, padding: Int) {
+    actv = LeakyReLU(negativeSlope: 0.2)
+    dropout = Dropout(p: 0.2)
+
+    _conv.wrappedValue = ConvWeighted(
+      inChannels: channels,
+      outChannels: channels,
+      kernelSize: kernelSize,
+      stride: 1,
+      padding: padding,
+    )
+    _norm.wrappedValue = LayerNormInference(dims: channels)
+  }
+
+  func callAsFunction(_ x: MLXArray) -> MLXArray {
+    var features = x
+
+    // ConvWeighted expects [batch, seq, channels], outputs same
+    features = features.swappedAxes(1, 2)
+    features = conv(features, conv: MLX.conv1d)
+    features = features.swappedAxes(1, 2)
+
+    // LayerNormInference expects [batch, seq, channels]
+    features = features.swappedAxes(1, 2)
+    features = norm(features)
+    features = features.swappedAxes(1, 2)
+
+    features = actv(features)
+    features = dropout(features)
+
+    return features
+  }
+}
+
+class TextEncoder: Module {
+  @ModuleInfo var embedding: Embedding
+  @ModuleInfo var cnn: [TextEncoderCNNBlock]
+  @ModuleInfo var lstm: BiLSTM
+
+  init(channels: Int, kernelSize: Int, depth: Int, nSymbols: Int) {
     let padding = (kernelSize - 1) / 2
 
-    var cnnLayers: [[Module]] = []
-    for i in 0 ..< depth {
-      cnnLayers.append([
-        ConvWeighted(
-          weightG: weights["text_encoder.cnn.\(i).0.weight_g"]!,
-          weightV: weights["text_encoder.cnn.\(i).0.weight_v"]!,
-          bias: weights["text_encoder.cnn.\(i).0.bias"]!,
-          padding: padding,
-        ),
-        LayerNormInference(
-          weight: weights["text_encoder.cnn.\(i).1.gamma"]!,
-          bias: weights["text_encoder.cnn.\(i).1.beta"]!,
-        ),
-        actv,
-        Dropout(p: 0.2),
-      ])
+    _embedding.wrappedValue = Embedding(embeddingCount: nSymbols, dimensions: channels)
+    _cnn.wrappedValue = (0 ..< depth).map { _ in
+      TextEncoderCNNBlock(channels: channels, kernelSize: kernelSize, padding: padding)
     }
-    cnn = cnnLayers
-
-    lstm = LSTM(
-      inputSize: channels,
-      hiddenSize: channels / 2,
-      wxForward: weights["text_encoder.lstm.weight_ih_l0"]!,
-      whForward: weights["text_encoder.lstm.weight_hh_l0"]!,
-      biasIhForward: weights["text_encoder.lstm.bias_ih_l0"]!,
-      biasHhForward: weights["text_encoder.lstm.bias_hh_l0"]!,
-      wxBackward: weights["text_encoder.lstm.weight_ih_l0_reverse"]!,
-      whBackward: weights["text_encoder.lstm.weight_hh_l0_reverse"]!,
-      biasIhBackward: weights["text_encoder.lstm.bias_ih_l0_reverse"]!,
-      biasHhBackward: weights["text_encoder.lstm.bias_hh_l0_reverse"]!,
-    )
+    _lstm.wrappedValue = BiLSTM(inputSize: channels, hiddenSize: channels / 2)
   }
 
   func callAsFunction(_ x: MLXArray, inputLengths _: MLXArray, m: MLXArray) -> MLXArray {
@@ -53,30 +68,14 @@ class TextEncoder {
     let mask = m.expandedDimensions(axis: 1)
     features = MLX.where(mask, 0.0, features)
 
-    for convBlock in cnn {
-      for layer in convBlock {
-        if layer is ConvWeighted || layer is LayerNormInference {
-          features = MLX.swappedAxes(features, 2, 1)
-          if let conv = layer as? ConvWeighted {
-            features = conv(features, conv: MLX.conv1d)
-          } else if let norm = layer as? LayerNormInference {
-            features = norm(features)
-          }
-          features = MLX.swappedAxes(features, 2, 1)
-        } else if let activation = layer as? LeakyReLU {
-          features = activation(features)
-        } else if let dropout = layer as? Dropout {
-          features = dropout(features)
-        } else {
-          fatalError("Unsupported layer type")
-        }
-        features = MLX.where(mask, 0.0, features)
-      }
+    for block in cnn {
+      features = block(features)
+      features = MLX.where(mask, 0.0, features)
     }
 
-    features = MLX.swappedAxes(features, 2, 1)
+    features = features.swappedAxes(1, 2)
     let (lstmOutput, _) = lstm(features)
-    features = MLX.swappedAxes(lstmOutput, 2, 1)
+    features = lstmOutput.swappedAxes(1, 2)
 
     // Pad output to match mask size
     let maskLen = m.shape[m.shape.count - 1]

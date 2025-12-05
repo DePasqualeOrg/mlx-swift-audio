@@ -1,6 +1,7 @@
 import Foundation
 import Hub
 import MLX
+import MLXLMCommon
 import MLXNN
 import Tokenizers
 
@@ -12,7 +13,7 @@ struct MimiConfig {
   let frameRate: Double
   let renormalize: Bool
   let seanet: SeanetConfig
-  let transformer: TransformerConfig
+  let transformer: MimiTransformerConfig
   let quantizerNQ: Int
   let quantizerBins: Int
   let quantizerDim: Int
@@ -23,7 +24,7 @@ struct MimiConfig {
     frameRate: Double,
     renormalize: Bool,
     seanet: SeanetConfig,
-    transformer: TransformerConfig,
+    transformer: MimiTransformerConfig,
     quantizerNQ: Int,
     quantizerBins: Int,
     quantizerDim: Int,
@@ -58,7 +59,7 @@ func mimi_202407(numCodebooks: Int) -> MimiConfig {
     trueSkip: true,
     compress: 2,
   )
-  let transformer = TransformerConfig(
+  let transformer = MimiTransformerConfig(
     dModel: seanet.dimension,
     numHeads: 8,
     numLayers: 8,
@@ -97,103 +98,95 @@ func mimi_202407(numCodebooks: Int) -> MimiConfig {
 // MARK: - Mimi
 
 final class Mimi: Module {
-  let cfg: MimiConfig
+  let config: MimiConfig
 
   @ModuleInfo var encoder: SeanetEncoder
   @ModuleInfo var decoder: SeanetDecoder
   @ModuleInfo var quantizer: SplitResidualVectorQuantizer
 
-  @ModuleInfo var encoder_transformer: ProjectedTransformer
-  @ModuleInfo var decoder_transformer: ProjectedTransformer
+  @ModuleInfo(key: "encoder_transformer") var encoderTransformer: ProjectedTransformer
+  @ModuleInfo(key: "decoder_transformer") var decoderTransformer: ProjectedTransformer
 
   @ModuleInfo var downsample: ConvDownsample1d
   @ModuleInfo var upsample: ConvTrUpsample1d
 
-  private(set) var encoderCache: [TTSKVCache]
-  private(set) var decoderCache: [TTSKVCache]
+  fileprivate(set) var encoderCache: [KVCache]
+  fileprivate(set) var decoderCache: [KVCache]
 
   private let downsampleStride: Int
 
-  init(cfg: MimiConfig) {
-    self.cfg = cfg
+  init(config: MimiConfig) {
+    self.config = config
 
-    let encFPS = cfg.sampleRate / Double(product(cfg.seanet.ratios))
-    downsampleStride = Int(encFPS / cfg.frameRate)
+    let encFPS = config.sampleRate / Double(product(config.seanet.ratios))
+    downsampleStride = Int(encFPS / config.frameRate)
 
-    _encoder = ModuleInfo(wrappedValue: SeanetEncoder(cfg: cfg.seanet))
-    _decoder = ModuleInfo(wrappedValue: SeanetDecoder(cfg: cfg.seanet))
+    _encoder.wrappedValue = SeanetEncoder(config: config.seanet)
+    _decoder.wrappedValue = SeanetDecoder(config: config.seanet)
 
-    _quantizer = ModuleInfo(wrappedValue: SplitResidualVectorQuantizer(
-      dim: cfg.quantizerDim,
-      inputDim: cfg.seanet.dimension,
-      outputDim: cfg.seanet.dimension,
-      nq: cfg.quantizerNQ,
-      bins: cfg.quantizerBins,
-    ))
+    _quantizer.wrappedValue = SplitResidualVectorQuantizer(
+      dim: config.quantizerDim,
+      inputDim: config.seanet.dimension,
+      outputDim: config.seanet.dimension,
+      nq: config.quantizerNQ,
+      bins: config.quantizerBins,
+    )
 
-    _encoder_transformer = ModuleInfo(wrappedValue: ProjectedTransformer(
-      cfg: cfg.transformer,
-      inputDim: cfg.seanet.dimension,
-      outputDims: [cfg.seanet.dimension],
-    ))
-    _decoder_transformer = ModuleInfo(wrappedValue: ProjectedTransformer(
-      cfg: cfg.transformer,
-      inputDim: cfg.seanet.dimension,
-      outputDims: [cfg.seanet.dimension],
-    ))
+    _encoderTransformer.wrappedValue = ProjectedTransformer(
+      config: config.transformer,
+      inputDim: config.seanet.dimension,
+      outputDims: [config.seanet.dimension],
+    )
+    _decoderTransformer.wrappedValue = ProjectedTransformer(
+      config: config.transformer,
+      inputDim: config.seanet.dimension,
+      outputDims: [config.seanet.dimension],
+    )
 
-    _downsample = ModuleInfo(wrappedValue: ConvDownsample1d(
-      stride: downsampleStride, dim: cfg.seanet.dimension, causal: true,
-    ))
-    _upsample = ModuleInfo(wrappedValue: ConvTrUpsample1d(
-      stride: downsampleStride, dim: cfg.seanet.dimension, causal: true,
-    ))
+    _downsample.wrappedValue = ConvDownsample1d(
+      stride: downsampleStride, dim: config.seanet.dimension, causal: true,
+    )
+    _upsample.wrappedValue = ConvTrUpsample1d(
+      stride: downsampleStride, dim: config.seanet.dimension, causal: true,
+    )
 
-    encoderCache = _encoder_transformer.wrappedValue.makeCache()
-    decoderCache = _decoder_transformer.wrappedValue.makeCache()
+    encoderCache = _encoderTransformer.wrappedValue.makeCache()
+    decoderCache = _decoderTransformer.wrappedValue.makeCache()
   }
 
   func resetState() {
     encoder.resetState()
     decoder.resetState()
-    for c in decoderCache {
-      c.reset()
-    }
-    for c in encoderCache {
-      c.reset()
-    }
+    decoderCache = decoderTransformer.makeCache()
+    encoderCache = encoderTransformer.makeCache()
   }
 
-  var frameRate: Double { cfg.frameRate }
-  var sampleRate: Double { cfg.sampleRate }
+  var frameRate: Double { config.frameRate }
+  var sampleRate: Double { config.sampleRate }
 
   func encode(_ xs: MLXArray) -> MLXArray {
     encoder.resetState()
-    for c in encoderCache {
-      c.reset()
-    }
+    encoderCache = encoderTransformer.makeCache()
 
     var z = encoder(xs)
-    z = encoder_transformer(z, cache: encoderCache)[0]
+    z = encoderTransformer(z, cache: encoderCache)[0]
     z = downsample(z)
     return quantizer.encode(z) // [B, nq, Tq]
   }
 
   func decode(_ codes: MLXArray) -> MLXArray {
     decoder.resetState()
-    for c in decoderCache {
-      c.reset()
-    }
+    decoderCache = decoderTransformer.makeCache()
 
     var z = quantizer.decode(codes) // [B, Cdim, Tq]
     z = upsample(z)
-    z = decoder_transformer(z, cache: decoderCache)[0]
+    z = decoderTransformer(z, cache: decoderCache)[0]
     return decoder(z) // [B, 1, T]
   }
 
   func encodeStep(_ xs: MLXArray) -> MLXArray {
     var z = encoder.step(xs)
-    z = encoder_transformer(z, cache: encoderCache)[0]
+    z = encoderTransformer(z, cache: encoderCache)[0]
     z = downsample.step(z)
     z = quantizer.encode(z)
     return z
@@ -202,7 +195,7 @@ final class Mimi: Module {
   func decodeStep(_ codes: MLXArray) -> MLXArray {
     var z = quantizer.decode(codes)
     z = upsample.step(z)
-    z = decoder_transformer(z, cache: decoderCache)[0]
+    z = decoderTransformer(z, cache: decoderCache)[0]
     z = decoder.step(z)
     return z
   }
@@ -221,9 +214,7 @@ final class MimiStreamingDecoder {
   func reset() {
     mimi.decoder.resetState()
     mimi.upsample.resetState()
-    for c in mimi.decoderCache {
-      c.reset()
-    }
+    mimi.decoderCache = mimi.decoderTransformer.makeCache()
   }
 
   func decodeFrames(_ tokens: MLXArray) -> MLXArray {
@@ -245,11 +236,11 @@ extension Mimi {
     Log.model.info("[Mimi] Starting Mimi model loading from \(repoId)")
 
     Log.model.debug("[Mimi] Creating configuration...")
-    let cfg = mimi_202407(numCodebooks: 32)
+    let mimiConfig = mimi_202407(numCodebooks: 32)
 
     Log.model.debug("[Mimi] Initializing Mimi model with config...")
     let modelInitStart = CFAbsoluteTimeGetCurrent()
-    let model = Mimi(cfg: cfg)
+    let model = Mimi(config: mimiConfig)
     let modelInitTime = CFAbsoluteTimeGetCurrent() - modelInitStart
     Log.model.debug("[Mimi] Model initialization completed in \(modelInitTime, format: .fixed(precision: 2)) seconds")
 

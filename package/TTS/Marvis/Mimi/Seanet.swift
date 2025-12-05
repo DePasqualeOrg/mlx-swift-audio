@@ -92,12 +92,12 @@ final class StreamingAdd: Module {
 
 final class SeanetResnetBlock: Module {
   @ModuleInfo var block: [StreamableConv1d]
-  @ModuleInfo(key: "streaming_add") var streamingAdd = StreamingAdd()
+  @ModuleInfo(key: "streaming_add") var streamingAdd: StreamingAdd
   @ModuleInfo var shortcut: StreamableConv1d?
 
-  init(cfg: SeanetConfig, dim: Int, ksizesAndDilations: [(Int, Int)]) {
+  init(config: SeanetConfig, dim: Int, ksizesAndDilations: [(Int, Int)]) {
     var layers: [StreamableConv1d] = []
-    let hidden = dim / cfg.compress
+    let hidden = dim / config.compress
     for (i, kd) in ksizesAndDilations.enumerated() {
       let (ksize, dilation) = kd
       let inC = (i == 0) ? dim : hidden
@@ -105,19 +105,20 @@ final class SeanetResnetBlock: Module {
       layers.append(StreamableConv1d(
         inChannels: inC, outChannels: outC, ksize: ksize,
         stride: 1, dilation: dilation, groups: 1, bias: true,
-        causal: cfg.causal, padMode: cfg.padMode,
+        causal: config.causal, padMode: config.padMode,
       ))
     }
-    _block = ModuleInfo(wrappedValue: layers)
+    _block.wrappedValue = layers
+    _streamingAdd.wrappedValue = StreamingAdd()
 
-    if cfg.trueSkip {
-      _shortcut = ModuleInfo(wrappedValue: nil)
+    if config.trueSkip {
+      _shortcut.wrappedValue = nil
     } else {
-      _shortcut = ModuleInfo(wrappedValue: StreamableConv1d(
+      _shortcut.wrappedValue = StreamableConv1d(
         inChannels: dim, outChannels: dim, ksize: 1,
         stride: 1, dilation: 1, groups: 1, bias: true,
-        causal: cfg.causal, padMode: cfg.padMode,
-      ))
+        causal: config.causal, padMode: config.padMode,
+      )
     }
   }
 
@@ -160,31 +161,31 @@ final class EncoderLayer: Module {
   @ModuleInfo var residuals: [SeanetResnetBlock]
   @ModuleInfo var downsample: StreamableConv1d
 
-  init(cfg: SeanetConfig, ratio: Int, mult: Int) {
+  init(config: SeanetConfig, ratio: Int, mult: Int) {
     var res: [SeanetResnetBlock] = []
     var dilation = 1
-    for _ in 0 ..< cfg.nresidualLayers {
+    for _ in 0 ..< config.nresidualLayers {
       res.append(SeanetResnetBlock(
-        cfg: cfg,
-        dim: mult * cfg.nfilters,
-        ksizesAndDilations: [(cfg.residualKsize, dilation), (1, 1)],
+        config: config,
+        dim: mult * config.nfilters,
+        ksizesAndDilations: [(config.residualKsize, dilation), (1, 1)],
       ))
-      dilation *= cfg.dilationBase
+      dilation *= config.dilationBase
     }
-    _residuals = ModuleInfo(wrappedValue: res)
+    _residuals.wrappedValue = res
 
     // NOTE: causal = true here (matches python)
-    _downsample = ModuleInfo(wrappedValue: StreamableConv1d(
-      inChannels: mult * cfg.nfilters,
-      outChannels: mult * cfg.nfilters * 2,
+    _downsample.wrappedValue = StreamableConv1d(
+      inChannels: mult * config.nfilters,
+      outChannels: mult * config.nfilters * 2,
       ksize: ratio * 2,
       stride: ratio,
       dilation: 1,
       groups: 1,
       bias: true,
       causal: true,
-      padMode: cfg.padMode,
-    ))
+      padMode: config.padMode,
+    )
   }
 
   func resetState() {
@@ -214,57 +215,57 @@ final class EncoderLayer: Module {
 // MARK: - SeanetEncoder
 
 final class SeanetEncoder: Module {
-  @ModuleInfo var init_conv1d: StreamableConv1d
+  @ModuleInfo(key: "init_conv1d") var initConv1d: StreamableConv1d
   @ModuleInfo var layers: [EncoderLayer]
-  @ModuleInfo var final_conv1d: StreamableConv1d
+  @ModuleInfo(key: "final_conv1d") var finalConv1d: StreamableConv1d
 
-  init(cfg: SeanetConfig) {
+  init(config: SeanetConfig) {
     var mult = 1
 
-    _init_conv1d = ModuleInfo(wrappedValue: StreamableConv1d(
-      inChannels: cfg.channels, outChannels: mult * cfg.nfilters,
-      ksize: cfg.ksize, stride: 1, dilation: 1, groups: 1, bias: true,
-      causal: cfg.causal, padMode: cfg.padMode,
-    ))
+    _initConv1d.wrappedValue = StreamableConv1d(
+      inChannels: config.channels, outChannels: mult * config.nfilters,
+      ksize: config.ksize, stride: 1, dilation: 1, groups: 1, bias: true,
+      causal: config.causal, padMode: config.padMode,
+    )
 
     var encLayers: [EncoderLayer] = []
-    for ratio in cfg.ratios.reversed() {
-      encLayers.append(EncoderLayer(cfg: cfg, ratio: ratio, mult: mult))
+    for ratio in config.ratios.reversed() {
+      encLayers.append(EncoderLayer(config: config, ratio: ratio, mult: mult))
       mult *= 2
     }
-    _layers = ModuleInfo(wrappedValue: encLayers)
+    _layers.wrappedValue = encLayers
 
-    _final_conv1d = ModuleInfo(wrappedValue: StreamableConv1d(
-      inChannels: mult * cfg.nfilters, outChannels: cfg.dimension,
-      ksize: cfg.lastKsize, stride: 1, dilation: 1, groups: 1, bias: true,
-      causal: cfg.causal, padMode: cfg.padMode,
-    ))
+    _finalConv1d.wrappedValue = StreamableConv1d(
+      inChannels: mult * config.nfilters, outChannels: config.dimension,
+      ksize: config.lastKsize, stride: 1, dilation: 1, groups: 1, bias: true,
+      causal: config.causal, padMode: config.padMode,
+    )
   }
 
   func resetState() {
-    init_conv1d.resetState()
-    final_conv1d.resetState()
+    initConv1d.resetState()
+    finalConv1d.resetState()
     for l in layers {
       l.resetState()
     }
   }
 
   func callAsFunction(_ xs: MLXArray) -> MLXArray {
-    var x = init_conv1d(xs)
+    var x = initConv1d(xs)
     for l in layers {
       x = l(x)
     }
     x = elu(x, alpha: 1.0)
-    return final_conv1d(x)
+    return finalConv1d(x)
   }
 
   func step(_ xs: MLXArray) -> MLXArray {
-    var x = init_conv1d.step(xs)
+    var x = initConv1d.step(xs)
     for l in layers {
       x = l.step(x)
     }
     x = elu(x, alpha: 1.0)
-    return final_conv1d.step(x)
+    return finalConv1d.step(x)
   }
 }
 
@@ -274,28 +275,28 @@ final class DecoderLayer: Module {
   @ModuleInfo var upsample: StreamableConvTranspose1d
   @ModuleInfo var residuals: [SeanetResnetBlock]
 
-  init(cfg: SeanetConfig, ratio: Int, mult: Int) {
-    _upsample = ModuleInfo(wrappedValue: StreamableConvTranspose1d(
-      inChannels: mult * cfg.nfilters,
-      outChannels: mult * cfg.nfilters / 2,
+  init(config: SeanetConfig, ratio: Int, mult: Int) {
+    _upsample.wrappedValue = StreamableConvTranspose1d(
+      inChannels: mult * config.nfilters,
+      outChannels: mult * config.nfilters / 2,
       ksize: ratio * 2,
       stride: ratio,
       groups: 1,
       bias: true,
-      causal: cfg.causal,
-    ))
+      causal: config.causal,
+    )
 
     var res: [SeanetResnetBlock] = []
     var dilation = 1
-    for _ in 0 ..< cfg.nresidualLayers {
+    for _ in 0 ..< config.nresidualLayers {
       res.append(SeanetResnetBlock(
-        cfg: cfg,
-        dim: mult * cfg.nfilters / 2,
-        ksizesAndDilations: [(cfg.residualKsize, dilation), (1, 1)],
+        config: config,
+        dim: mult * config.nfilters / 2,
+        ksizesAndDilations: [(config.residualKsize, dilation), (1, 1)],
       ))
-      dilation *= cfg.dilationBase
+      dilation *= config.dilationBase
     }
-    _residuals = ModuleInfo(wrappedValue: res)
+    _residuals.wrappedValue = res
   }
 
   func resetState() {
@@ -325,57 +326,57 @@ final class DecoderLayer: Module {
 // MARK: - SeanetDecoder
 
 final class SeanetDecoder: Module {
-  @ModuleInfo var init_conv1d: StreamableConv1d
+  @ModuleInfo(key: "init_conv1d") var initConv1d: StreamableConv1d
   @ModuleInfo var layers: [DecoderLayer]
-  @ModuleInfo var final_conv1d: StreamableConv1d
+  @ModuleInfo(key: "final_conv1d") var finalConv1d: StreamableConv1d
 
-  init(cfg: SeanetConfig) {
-    var mult = 1 << cfg.ratios.count
+  init(config: SeanetConfig) {
+    var mult = 1 << config.ratios.count
 
-    _init_conv1d = ModuleInfo(wrappedValue: StreamableConv1d(
-      inChannels: cfg.dimension, outChannels: mult * cfg.nfilters,
-      ksize: cfg.ksize, stride: 1, dilation: 1, groups: 1, bias: true,
-      causal: cfg.causal, padMode: cfg.padMode,
-    ))
+    _initConv1d.wrappedValue = StreamableConv1d(
+      inChannels: config.dimension, outChannels: mult * config.nfilters,
+      ksize: config.ksize, stride: 1, dilation: 1, groups: 1, bias: true,
+      causal: config.causal, padMode: config.padMode,
+    )
 
     var decLayers: [DecoderLayer] = []
-    for ratio in cfg.ratios {
-      decLayers.append(DecoderLayer(cfg: cfg, ratio: ratio, mult: mult))
+    for ratio in config.ratios {
+      decLayers.append(DecoderLayer(config: config, ratio: ratio, mult: mult))
       mult /= 2
     }
-    _layers = ModuleInfo(wrappedValue: decLayers)
+    _layers.wrappedValue = decLayers
 
-    _final_conv1d = ModuleInfo(wrappedValue: StreamableConv1d(
-      inChannels: cfg.nfilters, outChannels: cfg.channels,
-      ksize: cfg.lastKsize, stride: 1, dilation: 1, groups: 1, bias: true,
-      causal: cfg.causal, padMode: cfg.padMode,
-    ))
+    _finalConv1d.wrappedValue = StreamableConv1d(
+      inChannels: config.nfilters, outChannels: config.channels,
+      ksize: config.lastKsize, stride: 1, dilation: 1, groups: 1, bias: true,
+      causal: config.causal, padMode: config.padMode,
+    )
   }
 
   func resetState() {
-    init_conv1d.resetState()
-    final_conv1d.resetState()
+    initConv1d.resetState()
+    finalConv1d.resetState()
     for l in layers {
       l.resetState()
     }
   }
 
   func callAsFunction(_ xs: MLXArray) -> MLXArray {
-    var x = init_conv1d(xs)
+    var x = initConv1d(xs)
     for l in layers {
       x = l(x)
     }
     x = elu(x, alpha: 1.0)
-    return final_conv1d(x)
+    return finalConv1d(x)
   }
 
   func step(_ xs: MLXArray) -> MLXArray {
-    var x = init_conv1d.step(xs)
+    var x = initConv1d.step(xs)
     for l in layers {
       x = l.step(x)
     }
     x = elu(x, alpha: 1.0)
-    return final_conv1d.step(x)
+    return finalConv1d.step(x)
   }
 }
 
@@ -385,9 +386,9 @@ final class Seanet: Module {
   @ModuleInfo var encoder: SeanetEncoder
   @ModuleInfo var decoder: SeanetDecoder
 
-  init(cfg: SeanetConfig) {
-    _encoder = ModuleInfo(wrappedValue: SeanetEncoder(cfg: cfg))
-    _decoder = ModuleInfo(wrappedValue: SeanetDecoder(cfg: cfg))
+  init(config: SeanetConfig) {
+    _encoder.wrappedValue = SeanetEncoder(config: config)
+    _decoder.wrappedValue = SeanetDecoder(config: config)
   }
 
   // Optional convenience funcs if you want them:

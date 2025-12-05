@@ -184,14 +184,14 @@ final class ESpeakNGEngine {
 
     let textCopy = text as NSString
     var textPtr = UnsafeRawPointer(textCopy.utf8String)
-    let phonemes_mode = Int32((Int32(Character("_").asciiValue!) << 8) | 0x02)
+    let phonemesMode = Int32((Int32(Character("_").asciiValue!) << 8) | 0x02)
 
     // Use autoreleasepool to ensure memory is managed properly
     let result = autoreleasepool { () -> [String] in
       withUnsafeMutablePointer(to: &textPtr) { ptr in
         var resultWords: [String] = []
         while ptr.pointee != nil {
-          if let result = espeak_TextToPhonemes(ptr, espeakCHARS_UTF8, phonemes_mode) {
+          if let result = espeak_TextToPhonemes(ptr, espeakCHARS_UTF8, phonemesMode) {
             // Create a copy of the returned string to ensure we own the memory
             resultWords.append(String(cString: result, encoding: .utf8)!)
           }

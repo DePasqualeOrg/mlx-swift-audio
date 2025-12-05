@@ -13,7 +13,7 @@ import MLXNN
 // MARK: - ConvolutionModule
 
 /// Convolution module for Conformer
-public class ConvolutionModule: Module {
+class ConvolutionModule: Module {
   let channels: Int
   let kernelSize: Int
   let lorder: Int
@@ -26,7 +26,7 @@ public class ConvolutionModule: Module {
 
   let activation: UnaryLayer
 
-  public init(
+  init(
     channels: Int,
     kernelSize: Int = 15,
     activation: UnaryLayer? = nil,
@@ -91,7 +91,7 @@ public class ConvolutionModule: Module {
     self.activation = activation ?? SiLU()
   }
 
-  public func callAsFunction(
+  func callAsFunction(
     _ x: MLXArray,
     maskPad: MLXArray? = nil,
     cache: MLXArray? = nil,

@@ -10,10 +10,10 @@ class KokoroSourceModuleHnNSF: Module {
   private let sineAmp: Float
   private let noiseStd: Float
   private let lSinGen: KokoroSineGen
-  private let lLinear: Linear
+
+  @ModuleInfo(key: "l_linear") var lLinear: Linear
 
   init(
-    weights: [String: MLXArray],
     samplingRate: Int,
     upsampleScale: Float,
     harmonicNum: Int = 0,
@@ -35,10 +35,8 @@ class KokoroSourceModuleHnNSF: Module {
     )
 
     // To merge source harmonics into a single excitation
-    lLinear = Linear(
-      weight: weights["decoder.generator.m_source.l_linear.weight"]!,
-      bias: weights["decoder.generator.m_source.l_linear.bias"]!,
-    )
+    // Input: harmonicNum + 1, Output: 1
+    _lLinear.wrappedValue = Linear(harmonicNum + 1, 1)
 
     super.init()
   }

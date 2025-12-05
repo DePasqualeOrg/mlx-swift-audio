@@ -3,7 +3,7 @@
 //
 import Foundation
 
-struct AlbertModelArgs {
+struct AlbertConfig {
   let numHiddenLayers: Int
   let numAttentionHeads: Int
   let hiddenSize: Int

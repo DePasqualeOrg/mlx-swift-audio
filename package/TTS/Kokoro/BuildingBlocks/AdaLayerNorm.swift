@@ -7,12 +7,11 @@ import MLXNN
 
 class AdaLayerNorm: Module {
   let eps: Float
-  let fc: Linear
+  @ModuleInfo var fc: Linear
 
-  init(eps: Float = 1e-5, weight: MLXArray, bias: MLXArray?) {
+  init(inputDim: Int = 0, outputDim: Int = 0, eps: Float = 1e-5) {
     self.eps = eps
-    fc = Linear(weight: weight, bias: bias)
-    super.init()
+    _fc.wrappedValue = Linear(inputDim, outputDim)
   }
 
   func callAsFunction(_ x: MLXArray, _ s: MLXArray) -> MLXArray {

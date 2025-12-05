@@ -3,23 +3,22 @@
 //  MLXAudio
 //
 //  Marvis TTS engine conforming to TTSEngine protocol.
-//  Wraps the existing MarvisTTS implementation.
 //
 
 import Foundation
 import MLX
 
-/// Actor wrapper that owns and serializes access to MarvisTTS
-actor MarvisTTSSession {
-  private var tts: MarvisTTS?
+/// Actor wrapper for MarvisOrchestrator that provides thread-safe generation
+public actor MarvisTTS {
+  private var orchestrator: MarvisOrchestrator?
 
-  var isInitialized: Bool { tts != nil }
+  var isInitialized: Bool { orchestrator != nil }
 
   func initialize(
     modelRepoId: String,
     progressHandler: @escaping @Sendable (Progress) -> Void,
   ) async throws {
-    tts = try await MarvisTTS.fromPretrained(
+    orchestrator = try await MarvisOrchestrator.fromPretrained(
       repoId: modelRepoId,
       progressHandler: progressHandler,
     )
@@ -29,9 +28,9 @@ actor MarvisTTSSession {
     text: String,
     voice: MarvisEngine.Voice,
     quality: MarvisEngine.QualityLevel,
-  ) throws -> MarvisTTS.GenerationResult {
-    guard let tts else { throw TTSError.modelNotLoaded }
-    return try tts.generateAudio(text: text, voice: voice, quality: quality)
+  ) throws -> MarvisOrchestrator.GenerationResult {
+    guard let orchestrator else { throw TTSError.modelNotLoaded }
+    return try orchestrator.generateAudio(text: text, voice: voice, quality: quality)
   }
 
   func generateStreaming(
@@ -39,12 +38,12 @@ actor MarvisTTSSession {
     voice: MarvisEngine.Voice,
     quality: MarvisEngine.QualityLevel,
     interval: Double,
-  ) throws -> AsyncThrowingStream<MarvisTTS.GenerationResult, Error> {
-    guard let tts else { throw TTSError.modelNotLoaded }
+  ) throws -> AsyncThrowingStream<MarvisOrchestrator.GenerationResult, Error> {
+    guard let orchestrator else { throw TTSError.modelNotLoaded }
 
     return AsyncThrowingStream { continuation in
       do {
-        try tts.generateAudioStream(
+        try orchestrator.generateAudioStream(
           text: text,
           voice: voice,
           quality: quality,
@@ -60,8 +59,8 @@ actor MarvisTTSSession {
   }
 
   func cleanUp() throws {
-    try tts?.cleanUpMemory()
-    tts = nil
+    try orchestrator?.cleanUpMemory()
+    orchestrator = nil
   }
 }
 
@@ -137,7 +136,7 @@ public final class MarvisEngine: TTSEngine, StreamingTTSEngine {
 
   // MARK: - Private Properties
 
-  @ObservationIgnored private let session = MarvisTTSSession()
+  @ObservationIgnored private let marvisTTS = MarvisTTS()
   @ObservationIgnored private let audioPlayer = AudioSamplePlayer(sampleRate: TTSProvider.marvis.sampleRate)
   @ObservationIgnored private var generationTask: Task<Void, Never>?
   @ObservationIgnored private var lastModelVariant: ModelVariant?
@@ -155,22 +154,22 @@ public final class MarvisEngine: TTSEngine, StreamingTTSEngine {
   // MARK: - TTSEngine Protocol Methods
 
   public func load(progressHandler: (@Sendable (Progress) -> Void)?) async throws {
-    let sessionInitialized = await session.isInitialized
+    let isInitialized = await marvisTTS.isInitialized
 
     // Check if we need to reload
-    if sessionInitialized, lastModelVariant == modelVariant {
+    if isInitialized, lastModelVariant == modelVariant {
       Log.tts.debug("MarvisEngine already loaded with same configuration")
       return
     }
 
-    // Clean up existing session if configuration changed
-    if sessionInitialized {
+    // Clean up existing model if configuration changed
+    if isInitialized {
       Log.model.info("Configuration changed, reloading...")
       try await cleanup()
     }
 
     do {
-      try await session.initialize(
+      try await marvisTTS.initialize(
         modelRepoId: modelVariant.repoId,
         progressHandler: progressHandler ?? { _ in },
       )
@@ -199,7 +198,7 @@ public final class MarvisEngine: TTSEngine, StreamingTTSEngine {
     await stop()
 
     // Clear model but preserve audio player
-    try? await session.cleanUp()
+    try? await marvisTTS.cleanUp()
     lastModelVariant = nil
     isLoaded = false
 
@@ -248,7 +247,7 @@ public final class MarvisEngine: TTSEngine, StreamingTTSEngine {
     generationTime = 0
 
     do {
-      let result = try await session.generate(
+      let result = try await marvisTTS.generate(
         text: trimmedText,
         voice: voice,
         quality: qualityLevel,
@@ -332,7 +331,7 @@ public final class MarvisEngine: TTSEngine, StreamingTTSEngine {
         var isFirst = true
 
         do {
-          let stream = try await session.generateStreaming(
+          let stream = try await marvisTTS.generateStreaming(
             text: trimmedText,
             voice: voice,
             quality: quality,

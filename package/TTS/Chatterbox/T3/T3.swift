@@ -9,6 +9,7 @@
 import Foundation
 import MLX
 import MLXFast
+import MLXLMCommon
 import MLXNN
 import MLXRandom
 
@@ -16,10 +17,10 @@ import MLXRandom
 ///
 /// Generates speech tokens from text tokens, conditioned on speaker embeddings
 /// and optional emotion/prompt controls.
-public class T3: Module {
-  public let config: T3Config
-  public let llamaConfig: LlamaConfig
-  public let dim: Int
+class T3: Module {
+  let config: T3Config
+  let llamaConfig: T3LlamaConfig
+  let dim: Int
 
   @ModuleInfo(key: "tfmr") var tfmr: T3LlamaBackbone
   @ModuleInfo(key: "cond_enc") var condEnc: T3CondEnc
@@ -30,12 +31,12 @@ public class T3: Module {
   @ModuleInfo(key: "text_pos_emb") var textPosEmb: LearnedPositionEmbeddings
   @ModuleInfo(key: "speech_pos_emb") var speechPosEmb: LearnedPositionEmbeddings
 
-  public init(config: T3Config? = nil) {
+  init(config: T3Config? = nil) {
     let hp = config ?? T3Config.englishOnly()
     self.config = hp
 
     // Create LLaMA config from T3 config
-    llamaConfig = LlamaConfig.llama520M
+    llamaConfig = T3LlamaConfig.llama520M
     dim = llamaConfig.hiddenSize
 
     // LLaMA transformer backbone
@@ -63,7 +64,7 @@ public class T3: Module {
   }
 
   /// Prepare conditioning embeddings from T3Cond
-  public func prepareConditioning(_ t3Cond: inout T3Cond) -> MLXArray {
+  func prepareConditioning(_ t3Cond: inout T3Cond) -> MLXArray {
     // Embed speech prompt tokens if provided
     if t3Cond.condPromptSpeechTokens != nil, t3Cond.condPromptSpeechEmb == nil {
       t3Cond.condPromptSpeechEmb =
@@ -75,7 +76,7 @@ public class T3: Module {
   }
 
   /// Prepare input embeddings for the transformer
-  public func prepareInputEmbeds(
+  func prepareInputEmbeds(
     t3Cond: inout T3Cond,
     textTokens: MLXArray,
     speechTokens: MLXArray,
@@ -129,13 +130,13 @@ public class T3: Module {
   }
 
   /// Forward pass through T3 model
-  public func callAsFunction(
+  func callAsFunction(
     t3Cond: inout T3Cond,
     textTokens: MLXArray,
     textTokenLens _: MLXArray,
     speechTokens: MLXArray,
     speechTokenLens _: MLXArray,
-    cache: [T3KVCache]? = nil,
+    cache: [KVCache]? = nil,
   ) -> [String: MLXArray] {
     // Prepare input embeddings
     let (embeds, lenCond) = prepareInputEmbeds(
@@ -176,7 +177,7 @@ public class T3: Module {
   }
 
   /// Generate speech tokens from text tokens
-  public func inference(
+  func inference(
     t3Cond: inout T3Cond,
     textTokens: MLXArray,
     initialSpeechTokens _: MLXArray? = nil,

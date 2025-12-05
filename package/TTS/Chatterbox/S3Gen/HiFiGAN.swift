@@ -29,13 +29,13 @@ func getPadding(kernelSize: Int, dilation: Int = 1) -> Int {
 // MARK: - Snake Activation
 
 /// Snake activation function: x + (1/α) * sin²(αx)
-public class Snake: Module {
+class Snake: Module {
   let inFeatures: Int
   let alphaLogscale: Bool
   var alpha: MLXArray
   let noDivByZero: Float = 1e-9
 
-  public init(inFeatures: Int, alpha: Float = 1.0, alphaLogscale: Bool = false) {
+  init(inFeatures: Int, alpha: Float = 1.0, alphaLogscale: Bool = false) {
     self.inFeatures = inFeatures
     self.alphaLogscale = alphaLogscale
 
@@ -46,7 +46,7 @@ public class Snake: Module {
     }
   }
 
-  public func callAsFunction(_ x: MLXArray) -> MLXArray {
+  func callAsFunction(_ x: MLXArray) -> MLXArray {
     // Reshape alpha to align with x: (C,) -> (1, C, 1)
     var a = alpha.reshaped([1, -1, 1])
 
@@ -62,14 +62,14 @@ public class Snake: Module {
 // MARK: - ResBlock
 
 /// Residual block with Snake activation for HiFi-GAN
-public class HiFiGANResBlock: Module {
+class HiFiGANResBlock: Module {
   let channels: Int
   @ModuleInfo(key: "convs1") var convs1: [Conv1d]
   @ModuleInfo(key: "convs2") var convs2: [Conv1d]
   @ModuleInfo(key: "activations1") var activations1: [Snake]
   @ModuleInfo(key: "activations2") var activations2: [Snake]
 
-  public init(channels: Int = 512, kernelSize: Int = 3, dilations: [Int] = [1, 3, 5]) {
+  init(channels: Int = 512, kernelSize: Int = 3, dilations: [Int] = [1, 3, 5]) {
     self.channels = channels
 
     var c1: [Conv1d] = []
@@ -103,7 +103,7 @@ public class HiFiGANResBlock: Module {
     _activations2.wrappedValue = a2
   }
 
-  public func callAsFunction(_ x: MLXArray) -> MLXArray {
+  func callAsFunction(_ x: MLXArray) -> MLXArray {
     var result = x
     for i in 0 ..< convs1.count {
       var xt = activations1[i](result)
@@ -124,14 +124,14 @@ public class HiFiGANResBlock: Module {
 // MARK: - SineGen
 
 /// Sine wave generator for harmonic synthesis
-public class SineGen: Module {
+class SineGen: Module {
   let sineAmp: Float
   let noiseStd: Float
   let harmonicNum: Int
   let samplingRate: Int
   let voicedThreshold: Float
 
-  public init(
+  init(
     sampRate: Int,
     harmonicNum: Int = 0,
     sineAmp: Float = 0.1,
@@ -153,7 +153,7 @@ public class SineGen: Module {
   /// Generate sine waves from F0
   /// - Parameter f0: Fundamental frequency tensor (B, 1, T) in Hz
   /// - Returns: Tuple of (sine_waves, uv, noise)
-  public func callAsFunction(_ f0: MLXArray) -> (MLXArray, MLXArray, MLXArray) {
+  func callAsFunction(_ f0: MLXArray) -> (MLXArray, MLXArray, MLXArray) {
     let shape = f0.shape
     let B = shape[0]
     let T = shape[2]
@@ -195,14 +195,14 @@ public class SineGen: Module {
 // MARK: - SourceModuleHnNSF
 
 /// Neural Source Filter (NSF) module for harmonic and noise generation
-public class SourceModuleHnNSF: Module {
+class SourceModuleHnNSF: Module {
   let sineAmp: Float
   let noiseStd: Float
 
   @ModuleInfo(key: "l_sin_gen") var lSinGen: SineGen
   @ModuleInfo(key: "l_linear") var lLinear: Linear
 
-  public init(
+  init(
     samplingRate: Int,
     upsampleScale _: Int,
     harmonicNum: Int = 0,
@@ -226,7 +226,7 @@ public class SourceModuleHnNSF: Module {
   /// Generate harmonic and noise sources from F0
   /// - Parameter x: F0 tensor (B, T, 1)
   /// - Returns: Tuple of (sine_merge, noise, uv)
-  public func callAsFunction(_ x: MLXArray) -> (MLXArray, MLXArray, MLXArray) {
+  func callAsFunction(_ x: MLXArray) -> (MLXArray, MLXArray, MLXArray) {
     // Generate sine harmonics
     let (sineWavs, uv, _) = lSinGen(x.swappedAxes(1, 2))
     let sineWavsT = sineWavs.swappedAxes(1, 2)
@@ -356,7 +356,7 @@ func istftHiFiGAN(magnitude: MLXArray, phase: MLXArray, nFft: Int, hopLength: In
 // MARK: - HiFTGenerator
 
 /// HiFi-GAN with Neural Source Filter (HiFT-Net) generator
-public class HiFTGenerator: Module {
+class HiFTGenerator: Module {
   let outChannels: Int = 1
   let nbHarmonics: Int
   let samplingRate: Int
@@ -378,7 +378,7 @@ public class HiFTGenerator: Module {
   /// STFT window - underscore prefix excludes from parameter validation
   var _stftWindow: MLXArray
 
-  public init(
+  init(
     inChannels: Int = 80,
     baseChannels: Int = 512,
     nbHarmonics: Int = 8,
@@ -514,7 +514,7 @@ public class HiFTGenerator: Module {
   }
 
   /// Decode mel-spectrogram to waveform
-  public func decode(x: MLXArray, s: MLXArray) -> MLXArray {
+  func decode(x: MLXArray, s: MLXArray) -> MLXArray {
     // STFT of source signal
     let (sStftReal, sStftImag) = stftHiFiGAN(
       x: s.squeezed(axis: 1),
@@ -580,7 +580,7 @@ public class HiFTGenerator: Module {
   }
 
   /// Generate waveform from mel-spectrogram
-  public func callAsFunction(_ speechFeat: MLXArray, cacheSource: MLXArray? = nil) -> (MLXArray, MLXArray) {
+  func callAsFunction(_ speechFeat: MLXArray, cacheSource: MLXArray? = nil) -> (MLXArray, MLXArray) {
     var cache = cacheSource ?? MLXArray.zeros([1, 1, 0])
 
     // Predict F0 from mel
@@ -607,7 +607,7 @@ public class HiFTGenerator: Module {
   }
 
   /// Inference-mode forward pass
-  public func inference(_ speechFeat: MLXArray, cacheSource: MLXArray? = nil) -> (MLXArray, MLXArray) {
+  func inference(_ speechFeat: MLXArray, cacheSource: MLXArray? = nil) -> (MLXArray, MLXArray) {
     callAsFunction(speechFeat, cacheSource: cacheSource)
   }
 }

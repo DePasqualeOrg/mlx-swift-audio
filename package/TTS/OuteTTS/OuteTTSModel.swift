@@ -14,7 +14,7 @@ import MLXNN
 
 /// Configuration for OuteTTS model (Llama architecture)
 /// Loaded from config.json in the model repository
-struct OuteTTSLlamaConfiguration: Codable, Sendable {
+struct OuteTTSModelConfig: Codable, Sendable {
   var hiddenSize: Int
   var intermediateSize: Int
   var attentionHeads: Int
@@ -29,6 +29,17 @@ struct OuteTTSLlamaConfiguration: Codable, Sendable {
   var ropeScaling: [String: StringOrNumber]?
 
   var headDim: Int { hiddenSize / attentionHeads }
+
+  /// Check if config specifies Llama3-style scaling
+  var hasLlama3Scaling: Bool {
+    guard let scaling = ropeScaling,
+          case let .string(ropeType) = scaling["type"] ?? scaling["rope_type"],
+          ropeType == "llama3"
+    else {
+      return false
+    }
+    return true
+  }
 
   enum CodingKeys: String, CodingKey {
     case hiddenSize = "hidden_size"
@@ -63,110 +74,63 @@ struct OuteTTSLlamaConfiguration: Codable, Sendable {
   }
 }
 
-// MARK: - RoPE (Rotary Position Embedding)
-
-/// Rotary Position Embedding with Llama3-style scaling support
-class OuteTTSRoPE: Module {
-  let dims: Int
-  let traditional: Bool
-  var base: Float?
-  let scale: Float
-  var freqs: MLXArray?
-
-  init(config: OuteTTSLlamaConfiguration) {
-    dims = config.headDim
-    traditional = config.ropeTraditional
-    base = config.ropeTheta
-    scale = 1.0
-
-    super.init()
-
-    // Check for Llama3-style rope scaling
-    if let ropeScaling = config.ropeScaling,
-       case let .string(ropeType) = ropeScaling["type"] ?? ropeScaling["rope_type"],
-       ropeType == "llama3",
-       case let .float(factor) = ropeScaling["factor"],
-       let base
-    {
-      let lowFreqFactor: Float = if case let .float(v) = ropeScaling["low_freq_factor"] {
-        v
-      } else {
-        1.0
-      }
-
-      let highFreqFactor: Float = if case let .float(v) = ropeScaling["high_freq_factor"] {
-        v
-      } else {
-        4.0
-      }
-
-      let oldContextLen: Float = if case let .float(v) = ropeScaling["original_max_position_embeddings"] {
-        v
-      } else {
-        8192
-      }
-
-      let lowFreqWavelen = oldContextLen / lowFreqFactor
-      let highFreqWavelen = oldContextLen / highFreqFactor
-
-      let indices = MLXArray(stride(from: 0, to: dims, by: 2))
-      var frequencies = MLX.pow(base, indices / Float(dims))
-      let wavelens = 2 * Float.pi * frequencies
-
-      frequencies = MLX.where(
-        wavelens .> MLXArray(lowFreqWavelen),
-        frequencies * factor,
-        frequencies,
-      )
-      let isMediumFreq = MLX.logicalAnd(
-        wavelens .> MLXArray(highFreqWavelen),
-        wavelens .< MLXArray(lowFreqWavelen),
-      )
-      let smoothFactors = (oldContextLen / wavelens - lowFreqFactor) / (highFreqFactor - lowFreqFactor)
-      let smoothFreqs = frequencies / ((1 - smoothFactors) / factor + smoothFactors)
-
-      freqs = MLX.where(isMediumFreq, smoothFreqs, frequencies)
-      self.base = nil
-    }
-  }
-
-  func callAsFunction(_ x: MLXArray, offset: Int = 0) -> MLXArray {
-    MLXFast.RoPE(
-      x,
-      dimensions: dims,
-      traditional: traditional,
-      base: base,
-      scale: scale,
-      offset: offset,
-      freqs: freqs,
-    )
-  }
-}
-
 // MARK: - Attention Module
 
 /// Multi-head attention with Grouped Query Attention (GQA) support
-class OuteTTSAttention: Module {
-  let config: OuteTTSLlamaConfiguration
+private class OuteTTSAttention: Module {
+  let config: OuteTTSModelConfig
   let scale: Float
 
-  @ModuleInfo(key: "q_proj") var wq: Linear
-  @ModuleInfo(key: "k_proj") var wk: Linear
-  @ModuleInfo(key: "v_proj") var wv: Linear
-  @ModuleInfo(key: "o_proj") var wo: Linear
+  @ModuleInfo(key: "q_proj") var qProj: Linear
+  @ModuleInfo(key: "k_proj") var kProj: Linear
+  @ModuleInfo(key: "v_proj") var vProj: Linear
+  @ModuleInfo(key: "o_proj") var oProj: Linear
 
-  let rope: OuteTTSRoPE
+  // RoPE for Llama3-style scaling, or standard RoPE parameters as fallback
+  let rope: Llama3RoPE?
+  let standardRopeBase: Float?
+  let standardRopeTraditional: Bool
+  let ropeDims: Int
 
-  init(_ config: OuteTTSLlamaConfiguration) {
+  init(_ config: OuteTTSModelConfig) {
     self.config = config
     scale = 1.0 / sqrt(Float(config.headDim))
+    ropeDims = config.headDim
+    standardRopeTraditional = config.ropeTraditional
 
-    _wq.wrappedValue = Linear(config.hiddenSize, config.attentionHeads * config.headDim, bias: false)
-    _wk.wrappedValue = Linear(config.hiddenSize, config.kvHeads * config.headDim, bias: false)
-    _wv.wrappedValue = Linear(config.hiddenSize, config.kvHeads * config.headDim, bias: false)
-    _wo.wrappedValue = Linear(config.attentionHeads * config.headDim, config.hiddenSize, bias: false)
+    _qProj.wrappedValue = Linear(config.hiddenSize, config.attentionHeads * config.headDim, bias: false)
+    _kProj.wrappedValue = Linear(config.hiddenSize, config.kvHeads * config.headDim, bias: false)
+    _vProj.wrappedValue = Linear(config.hiddenSize, config.kvHeads * config.headDim, bias: false)
+    _oProj.wrappedValue = Linear(config.attentionHeads * config.headDim, config.hiddenSize, bias: false)
 
-    rope = OuteTTSRoPE(config: config)
+    if config.hasLlama3Scaling {
+      rope = Llama3RoPE(
+        dims: config.headDim,
+        traditional: config.ropeTraditional,
+        base: config.ropeTheta,
+        ropeScaling: config.ropeScaling,
+      )
+      standardRopeBase = nil
+    } else {
+      rope = nil
+      standardRopeBase = config.ropeTheta
+    }
+  }
+
+  private func applyRoPE(_ x: MLXArray, offset: Int) -> MLXArray {
+    if let rope {
+      rope(x, offset: offset)
+    } else {
+      MLXFast.RoPE(
+        x,
+        dimensions: ropeDims,
+        traditional: standardRopeTraditional,
+        base: standardRopeBase,
+        scale: 1.0,
+        offset: offset,
+        freqs: nil,
+      )
+    }
   }
 
   func callAsFunction(
@@ -176,9 +140,9 @@ class OuteTTSAttention: Module {
   ) -> MLXArray {
     let (B, L) = (x.dim(0), x.dim(1))
 
-    var queries = wq(x)
-    var keys = wk(x)
-    var values = wv(x)
+    var queries = qProj(x)
+    var keys = kProj(x)
+    var values = vProj(x)
 
     // Reshape for multi-head attention: [B, L, H, D] -> [B, H, L, D]
     queries = queries.reshaped(B, L, config.attentionHeads, -1).transposed(0, 2, 1, 3)
@@ -187,8 +151,8 @@ class OuteTTSAttention: Module {
 
     // Apply RoPE with cache offset
     let offset = cache?.offset ?? 0
-    queries = rope(queries, offset: offset)
-    keys = rope(keys, offset: offset)
+    queries = applyRoPE(queries, offset: offset)
+    keys = applyRoPE(keys, offset: offset)
 
     // Update cache and compute attention
     let output: MLXArray
@@ -214,42 +178,27 @@ class OuteTTSAttention: Module {
     // Reshape back: [B, H, L, D] -> [B, L, H*D]
     let outputReshaped = output.transposed(0, 2, 1, 3).reshaped(B, L, -1)
 
-    return wo(outputReshaped)
-  }
-}
-
-// MARK: - MLP Module
-
-/// Feed-forward network with SiLU activation (SwiGLU variant)
-class OuteTTSMLP: Module, UnaryLayer {
-  @ModuleInfo(key: "gate_proj") var gate: Linear
-  @ModuleInfo(key: "down_proj") var down: Linear
-  @ModuleInfo(key: "up_proj") var up: Linear
-
-  init(_ config: OuteTTSLlamaConfiguration) {
-    _gate.wrappedValue = Linear(config.hiddenSize, config.intermediateSize, bias: false)
-    _down.wrappedValue = Linear(config.intermediateSize, config.hiddenSize, bias: false)
-    _up.wrappedValue = Linear(config.hiddenSize, config.intermediateSize, bias: false)
-  }
-
-  func callAsFunction(_ x: MLXArray) -> MLXArray {
-    down(silu(gate(x)) * up(x))
+    return oProj(outputReshaped)
   }
 }
 
 // MARK: - Transformer Block
 
 /// Single transformer layer with attention and MLP
-class OuteTTSTransformerBlock: Module {
+private class OuteTTSTransformerBlock: Module {
   @ModuleInfo(key: "self_attn") var attention: OuteTTSAttention
-  @ModuleInfo(key: "mlp") var mlp: OuteTTSMLP
+  @ModuleInfo(key: "mlp") var mlp: SwiGLUMLP
 
   @ModuleInfo(key: "input_layernorm") var inputLayerNorm: RMSNorm
   @ModuleInfo(key: "post_attention_layernorm") var postAttentionLayerNorm: RMSNorm
 
-  init(_ config: OuteTTSLlamaConfiguration) {
+  init(_ config: OuteTTSModelConfig) {
     _attention.wrappedValue = OuteTTSAttention(config)
-    _mlp.wrappedValue = OuteTTSMLP(config)
+    _mlp.wrappedValue = SwiGLUMLP(
+      hiddenSize: config.hiddenSize,
+      intermediateSize: config.intermediateSize,
+      bias: false,
+    )
     _inputLayerNorm.wrappedValue = RMSNorm(dimensions: config.hiddenSize, eps: config.rmsNormEps)
     _postAttentionLayerNorm.wrappedValue = RMSNorm(dimensions: config.hiddenSize, eps: config.rmsNormEps)
   }
@@ -270,15 +219,15 @@ class OuteTTSTransformerBlock: Module {
 // MARK: - Model Inner
 
 /// Inner model (without LM head)
-class OuteTTSModelInner: Module {
-  let config: OuteTTSLlamaConfiguration
+class OuteTTSModel: Module {
+  let config: OuteTTSModelConfig
 
   @ModuleInfo(key: "embed_tokens") var embedTokens: Embedding
   @ModuleInfo(key: "norm") var norm: RMSNorm
 
-  let layers: [OuteTTSTransformerBlock]
+  fileprivate let layers: [OuteTTSTransformerBlock]
 
-  init(_ config: OuteTTSLlamaConfiguration) {
+  init(_ config: OuteTTSModelConfig) {
     self.config = config
 
     _embedTokens.wrappedValue = Embedding(
@@ -312,15 +261,15 @@ class OuteTTSModelInner: Module {
 // MARK: - LM Head Model
 
 /// OuteTTS model with language modeling head
-class OuteTTSLlamaModel: Module {
-  @ModuleInfo(key: "model") var model: OuteTTSModelInner
+class OuteTTSLMHeadModel: Module {
+  @ModuleInfo(key: "model") var model: OuteTTSModel
   @ModuleInfo(key: "lm_head") var lmHead: Linear?
 
-  let config: OuteTTSLlamaConfiguration
+  let config: OuteTTSModelConfig
 
-  init(_ config: OuteTTSLlamaConfiguration) {
+  init(_ config: OuteTTSModelConfig) {
     self.config = config
-    _model.wrappedValue = OuteTTSModelInner(config)
+    _model.wrappedValue = OuteTTSModel(config)
 
     // Only create separate lm_head if not tying word embeddings
     if !config.tieWordEmbeddings {

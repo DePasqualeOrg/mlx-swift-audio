@@ -14,13 +14,13 @@ import MLXRandom
 // MARK: - AttentionQKV
 
 /// Multi-head attention with separate Q, K, V projections
-public class AttentionQKV: Module {
+class AttentionQKV: Module {
   let nHeads: Int
   let headDim: Int
   let scale: Float
   let dropoutRate: Float
 
-  public init(nHeads: Int, headDim: Int, dropoutRate: Float = 0.1, scale: Float? = nil) {
+  init(nHeads: Int, headDim: Int, dropoutRate: Float = 0.1, scale: Float? = nil) {
     self.nHeads = nHeads
     self.headDim = headDim
     self.scale = scale ?? pow(Float(headDim), -0.5)
@@ -35,7 +35,7 @@ public class AttentionQKV: Module {
   ///   - v: Value tensor (B, T_v, n_heads * head_dim)
   ///   - mask: Optional attention mask
   /// - Returns: Output tensor (B, T_q, n_heads * head_dim)
-  public func callAsFunction(
+  func callAsFunction(
     q: MLXArray,
     k: MLXArray,
     v: MLXArray,
@@ -78,7 +78,7 @@ public class AttentionQKV: Module {
 // MARK: - AttentionBlock
 
 /// Cross-attention block with separate Q, K, V linear transformations
-public class AttentionBlock: Module {
+class AttentionBlock: Module {
   let channels: Int
   let numHeads: Int
 
@@ -91,7 +91,7 @@ public class AttentionBlock: Module {
   // AttentionQKV has no trainable parameters, so no @ModuleInfo
   var attention: AttentionQKV
 
-  public init(channels: Int, numHeads: Int = 1, dropoutRate: Float = 0.2, scale: Float? = nil) {
+  init(channels: Int, numHeads: Int = 1, dropoutRate: Float = 0.2, scale: Float? = nil) {
     self.channels = channels
     self.numHeads = numHeads
 
@@ -119,7 +119,7 @@ public class AttentionBlock: Module {
   ///   - x2: Key/Value source (B, T2, C)
   ///   - mask: Optional attention mask
   /// - Returns: Output (B, T1, C)
-  public func callAsFunction(_ x1: MLXArray, _ x2: MLXArray, mask: MLXArray? = nil) -> MLXArray {
+  func callAsFunction(_ x1: MLXArray, _ x2: MLXArray, mask: MLXArray? = nil) -> MLXArray {
     let x1Norm = norm(x1)
     let x2Norm = norm(x2)
 
@@ -141,7 +141,7 @@ public class AttentionBlock: Module {
 ///
 /// Note: Uses a single shared attention block for both cross-attention
 /// and self-attention, matching the original PyTorch implementation.
-public class Perceiver: Module {
+class Perceiver: Module {
   let queryShape: [Int]
 
   // Learnable query tokens - stored as a parameter for weight loading
@@ -149,7 +149,7 @@ public class Perceiver: Module {
 
   @ModuleInfo(key: "attn") var attn: AttentionBlock
 
-  public init(
+  init(
     preAttentionQueryToken: Int = 32,
     preAttentionQuerySize: Int = 1024,
     embeddingDim: Int = 1024,
@@ -175,7 +175,7 @@ public class Perceiver: Module {
   ///
   /// - Parameter h: Input embeddings (B, T, D) - variable length T
   /// - Returns: Fixed-length output (B, query_tokens, D)
-  public func callAsFunction(_ h: MLXArray) -> MLXArray {
+  func callAsFunction(_ h: MLXArray) -> MLXArray {
     let B = h.shape[0]
 
     // Expand query to batch size

@@ -9,7 +9,7 @@ class AlbertOutput {
   let dense: Linear
   let layerNorm: LayerNorm
 
-  init(config: AlbertModelArgs) {
+  init(config: AlbertConfig) {
     dense = Linear(config.intermediateSize, config.hiddenSize)
     layerNorm = LayerNorm(
       dimensions: config.hiddenSize,

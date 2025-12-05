@@ -13,7 +13,7 @@ import MLXNN
 // MARK: - MultiHeadedAttention
 
 /// Multi-Head Attention layer
-public class MultiHeadedAttention: Module {
+class MultiHeadedAttention: Module {
   let dK: Int
   let h: Int
   let dropoutRate: Float
@@ -23,7 +23,7 @@ public class MultiHeadedAttention: Module {
   @ModuleInfo(key: "linear_v") var linearV: Linear
   @ModuleInfo(key: "linear_out") var linearOut: Linear
 
-  public init(nHead: Int, nFeat: Int, dropoutRate: Float, keyBias: Bool = true) {
+  init(nHead: Int, nFeat: Int, dropoutRate: Float, keyBias: Bool = true) {
     precondition(nFeat % nHead == 0, "nFeat must be divisible by nHead")
 
     dK = nFeat / nHead
@@ -86,7 +86,7 @@ public class MultiHeadedAttention: Module {
   }
 
   /// Scaled dot product attention
-  public func callAsFunction(
+  func callAsFunction(
     query: MLXArray,
     key: MLXArray,
     value: MLXArray,
@@ -117,12 +117,12 @@ public class MultiHeadedAttention: Module {
 // MARK: - RelPositionMultiHeadedAttention
 
 /// Multi-Head Attention with relative positional encoding
-public class RelPositionMultiHeadedAttention: MultiHeadedAttention {
+class RelPositionMultiHeadedAttention: MultiHeadedAttention {
   @ModuleInfo(key: "linear_pos") var linearPos: Linear
   @ParameterInfo(key: "pos_bias_u") var posBiasU: MLXArray
   @ParameterInfo(key: "pos_bias_v") var posBiasV: MLXArray
 
-  override public init(nHead: Int, nFeat: Int, dropoutRate: Float, keyBias: Bool = true) {
+  override init(nHead: Int, nFeat: Int, dropoutRate: Float, keyBias: Bool = true) {
     // Initialize learnable biases for relative position
     let dK = nFeat / nHead
     let scale = Float(sqrt(6.0 / Float(nHead + dK)))
@@ -145,7 +145,7 @@ public class RelPositionMultiHeadedAttention: MultiHeadedAttention {
     return xSliced[0..., 0..., 0..., 0 ..< x.shape[3] / 2 + 1]
   }
 
-  override public func callAsFunction(
+  override func callAsFunction(
     query: MLXArray,
     key: MLXArray,
     value: MLXArray,

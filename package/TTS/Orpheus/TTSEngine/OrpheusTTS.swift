@@ -111,8 +111,23 @@ public actor OrpheusTTS {
     let snacWeights = try await Profiler.timeAsync("SNAC weights loading") {
       try await SNACDecoder.loadWeights(repoId: snacRepoId, progressHandler: progressHandler)
     }
+
+    // Initialize SNAC decoder using standard Module pattern
     let snacDecoder = Profiler.time("SNAC decoder init") {
-      SNACDecoder(config: snacConfig, weights: snacWeights)
+      SNACDecoder(config: snacConfig)
+    }
+
+    // Sanitize and load weights using standard MLX pattern
+    try Profiler.time("SNAC weight loading into model") {
+      let (decoderWeights, quantizerWeights) = SNACDecoder.sanitizeWeights(snacWeights, noise: snacConfig.noise)
+      let snacParameters = ModuleParameters.unflattened(decoderWeights)
+      try snacDecoder.update(parameters: snacParameters, verify: .noUnusedKeys)
+      snacDecoder.setQuantizerWeights(quantizerWeights)
+    }
+
+    // Evaluate SNAC model
+    Profiler.time("SNAC model evaluation") {
+      eval(snacDecoder)
     }
 
     // Download and load tokenizer files from Hub
@@ -166,26 +181,26 @@ public actor OrpheusTTS {
     let prompt = "\(voice.rawValue): \(text)"
     Log.tts.debug("Orpheus prompt: \(prompt)")
 
-    let input_ids_tuple = Profiler.time("Tokenizer preparation") {
+    let inputIdsTuple = Profiler.time("Tokenizer preparation") {
       tokenizer.prepareInputIds(prompts: [prompt])
     }
 
     // Convert the tokenizer output to a Swift [Int32]
-    let current_ids = Profiler.time("Input IDs conversion") {
-      let array = MLXArray(input_ids_tuple.0[0].asArray(Int32.self))
+    let currentIds = Profiler.time("Input IDs conversion") {
+      let array = MLXArray(inputIdsTuple.0[0].asArray(Int32.self))
       return array.ndim == 1 ? array.reshaped([1, -1]) : array
     }
 
-    Log.tts.debug("Input IDs: \(current_ids.shape) = \(current_ids.asArray(Int32.self))")
+    Log.tts.debug("Input IDs: \(currentIds.shape) = \(currentIds.asArray(Int32.self))")
 
     // Initialize inference state with KV caches and initial forward pass
     // Using InferenceState wrapper to satisfy Swift concurrency checker
     var state = Profiler.time("Initial forward pass") {
       let cache = model.newCache()
-      var logits = model(current_ids, cache: cache)
+      var logits = model(currentIds, cache: cache)
       // Get logits for the last token only
       logits = logits[0, -1].expandDims(at: 0)
-      return InferenceState(cache: cache, logits: logits, currentIds: current_ids)
+      return InferenceState(cache: cache, logits: logits, currentIds: currentIds)
     }
 
     // Generate audio tokens
@@ -216,14 +231,14 @@ public actor OrpheusTTS {
       }
 
       // Only extract the Int32 value when we absolutely need it for CPU operations
-      let next_token: Int32 = Profiler.time("Token extraction") {
+      let nextToken: Int32 = Profiler.time("Token extraction") {
         // This operation forces GPU->CPU transfer and might be a sync point
         let result: Int32 = nextTokenArray[0].item()
         return result
       }
 
       // Stop generation only at the general end-of-text token
-      if next_token == Self.endToken {
+      if nextToken == Self.endToken {
         let endArr = MLXArray([Self.endToken]).reshaped([1, 1])
         state.currentIds = MLX.concatenated([state.currentIds, endArr], axis: 1)
         if Profiler.enabled {
@@ -240,7 +255,7 @@ public actor OrpheusTTS {
 
       // Add to history for repetition penalty *after* it's been sampled
       Profiler.time("History update") {
-        generatedTokensForPenalty.append(next_token)
+        generatedTokensForPenalty.append(nextToken)
         if generatedTokensForPenalty.count > Self.repetitionContextSize { // Keep history to context size
           generatedTokensForPenalty.removeFirst()
         }
@@ -273,7 +288,7 @@ public actor OrpheusTTS {
         if i < 5 || i % 10 == 0 {
           Log.perf.debug("  🔀 Iteration \(i): \(iterationDuration.formatted(decimals: 2)) ms total")
           Log.perf.debug("    📊 Forward: \(forwardPassDuration.formatted(decimals: 2)) ms")
-          Log.perf.debug("    🎯 Token: \(next_token)")
+          Log.perf.debug("    🎯 Token: \(nextToken)")
         }
       }
 
@@ -285,13 +300,13 @@ public actor OrpheusTTS {
     }
 
     // Parse the output into code lists
-    let code_lists = Profiler.time("Output parsing") {
+    let codeLists = Profiler.time("Output parsing") {
       parseOutput(tokens: state.currentIds.asArray(Int32.self).map { Int($0) })
     }
 
     // Generate audio using SNAC decoder
     let waveform = Profiler.time("SNAC decoding") {
-      snacDecoder.decode(codes: code_lists)
+      snacDecoder.decode(codes: codeLists)
     }
 
     let totalGenerationEnd = CFAbsoluteTimeGetCurrent()

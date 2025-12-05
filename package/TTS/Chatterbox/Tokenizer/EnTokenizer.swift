@@ -12,19 +12,19 @@ import MLX
 // MARK: - Special Tokens
 
 /// Start of text token
-public let SOT = "[START]"
+let SOT = "[START]"
 
 /// End of text token
-public let EOT = "[STOP]"
+let EOT = "[STOP]"
 
 /// Unknown token
-public let UNK = "[UNK]"
+let UNK = "[UNK]"
 
 /// Space token (replaces actual spaces)
-public let SPACE = "[SPACE]"
+let SPACE = "[SPACE]"
 
 /// All special tokens
-public let SpecialTokens = [SOT, EOT, UNK, SPACE, "[PAD]", "[SEP]", "[CLS]", "[MASK]"]
+let SpecialTokens = [SOT, EOT, UNK, SPACE, "[PAD]", "[SEP]", "[CLS]", "[MASK]"]
 
 // MARK: - EnTokenizer
 
@@ -32,7 +32,7 @@ public let SpecialTokens = [SOT, EOT, UNK, SPACE, "[PAD]", "[SEP]", "[CLS]", "[M
 ///
 /// Uses a vocabulary file (tokenizer.json) to tokenize text into token IDs.
 /// This is a simplified implementation that loads a vocabulary from JSON.
-public class EnTokenizer {
+class EnTokenizer {
   /// Token to ID mapping
   private let vocabToId: [String: Int]
 
@@ -40,12 +40,12 @@ public class EnTokenizer {
   private let idToVocab: [Int: String]
 
   /// Vocabulary size
-  public var vocabSize: Int {
+  var vocabSize: Int {
     vocabToId.count
   }
 
   /// Initialize tokenizer from vocabulary file
-  public init(vocabFilePath: String) throws {
+  init(vocabFilePath: String) throws {
     let fileURL = URL(fileURLWithPath: vocabFilePath)
     let data = try Data(contentsOf: fileURL)
 
@@ -94,7 +94,7 @@ public class EnTokenizer {
   }
 
   /// Initialize tokenizer from vocabulary dictionary
-  public init(vocab: [String: Int]) throws {
+  init(vocab: [String: Int]) throws {
     vocabToId = vocab
     idToVocab = Dictionary(uniqueKeysWithValues: vocab.map { ($1, $0) })
     try checkVocab()
@@ -111,7 +111,7 @@ public class EnTokenizer {
   }
 
   /// Convert text to token IDs
-  public func textToTokens(_ text: String) -> MLXArray {
+  func textToTokens(_ text: String) -> MLXArray {
     let tokenIds = encode(text)
     let int32Tokens = tokenIds.map { Int32($0) }
     return MLXArray(int32Tokens).reshaped([1, -1])
@@ -119,7 +119,7 @@ public class EnTokenizer {
 
   /// Encode text to token IDs
   /// Replaces spaces with SPACE token before encoding
-  public func encode(_ text: String) -> [Int] {
+  func encode(_ text: String) -> [Int] {
     // Replace spaces with SPACE token
     let processedText = text.replacingOccurrences(of: " ", with: SPACE)
 
@@ -177,7 +177,7 @@ public class EnTokenizer {
   }
 
   /// Decode token IDs back to text
-  public func decode(_ tokenIds: MLXArray) -> String {
+  func decode(_ tokenIds: MLXArray) -> String {
     var ids = tokenIds
     if ids.ndim == 2 {
       ids = ids[0]
@@ -204,17 +204,17 @@ public class EnTokenizer {
   }
 
   /// Decode token IDs back to text (from array)
-  public func decode(_ tokenIds: [Int]) -> String {
+  func decode(_ tokenIds: [Int]) -> String {
     decode(MLXArray(tokenIds.map { Int32($0) }))
   }
 
   /// Get start-of-text token ID
-  public func getSotTokenId() -> Int {
+  func getSotTokenId() -> Int {
     vocabToId[SOT] ?? 0
   }
 
   /// Get end-of-text token ID
-  public func getEotTokenId() -> Int {
+  func getEotTokenId() -> Int {
     vocabToId[EOT] ?? 0
   }
 }
@@ -222,11 +222,11 @@ public class EnTokenizer {
 // MARK: - Errors
 
 /// Tokenizer errors
-public enum TokenizerError: Error, LocalizedError {
+enum TokenizerError: Error, LocalizedError {
   case invalidFormat(String)
   case missingToken(String)
 
-  public var errorDescription: String? {
+  var errorDescription: String? {
     switch self {
       case let .invalidFormat(message):
         "Invalid tokenizer format: \(message)"

@@ -12,7 +12,7 @@ import MLXNN
 // MARK: - Utility Functions
 
 /// Calculate number of windows and target length for partial utterance splitting
-public func getNumWins(
+func getNumWins(
   nFrames: Int,
   step: Int,
   minCoverage: Float,
@@ -31,7 +31,7 @@ public func getNumWins(
 }
 
 /// Compute how many frames separate two partial utterances
-public func getFrameStep(
+func getFrameStep(
   overlap: Float,
   rate: Float?,
   config: VoiceEncConfig,
@@ -51,17 +51,17 @@ public func getFrameStep(
 // MARK: - Voice Encoder
 
 /// LSTM-based voice encoder for speaker embeddings
-public class VoiceEncoder: Module {
-  public let config: VoiceEncConfig
+class VoiceEncoder: Module {
+  let config: VoiceEncConfig
 
   @ModuleInfo(key: "lstm") var lstm: ChatterboxLSTM
   @ModuleInfo(key: "proj") var proj: Linear
 
   // Cosine similarity scaling (learnable parameters)
-  @ParameterInfo(key: "similarity_weight") public var similarityWeight: MLXArray
-  @ParameterInfo(key: "similarity_bias") public var similarityBias: MLXArray
+  @ParameterInfo(key: "similarity_weight") var similarityWeight: MLXArray
+  @ParameterInfo(key: "similarity_bias") var similarityBias: MLXArray
 
-  public init(config: VoiceEncConfig = VoiceEncConfig()) {
+  init(config: VoiceEncConfig = VoiceEncConfig()) {
     self.config = config
 
     _lstm.wrappedValue = ChatterboxLSTM(
@@ -79,7 +79,7 @@ public class VoiceEncoder: Module {
   ///
   /// - Parameter mels: Batch of unscaled mel spectrograms (B, T, M) where T is vePartialFrames
   /// - Returns: Embeddings as (B, E) where E is speakerEmbedSize. Embeddings are L2-normed.
-  public func callAsFunction(_ mels: MLXArray) -> MLXArray {
+  func callAsFunction(_ mels: MLXArray) -> MLXArray {
     if config.normalizedMels {
       let minVal = mels.min()
       let maxVal = mels.max()
@@ -119,7 +119,7 @@ public class VoiceEncoder: Module {
   ///   - minCoverage: Minimum coverage for partial windows (default 0.8)
   ///   - batchSize: Batch size for processing partials
   /// - Returns: (B, E) embeddings
-  public func inference(
+  func inference(
     mels: MLXArray,
     melLens: [Int],
     overlap: Float = 0.5,
@@ -204,7 +204,7 @@ public class VoiceEncoder: Module {
   }
 
   /// Takes L2-normalized utterance embeddings, computes mean and L2-normalizes to get a speaker embedding.
-  public static func uttToSpkEmbed(_ uttEmbeds: MLXArray) -> MLXArray {
+  static func uttToSpkEmbed(_ uttEmbeds: MLXArray) -> MLXArray {
     precondition(uttEmbeds.ndim == 2, "Expected 2D tensor for utterance embeddings")
     let mean = MLX.mean(uttEmbeds, axis: 0)
     let norm = MLX.sqrt(MLX.sum(mean * mean))
@@ -212,7 +212,7 @@ public class VoiceEncoder: Module {
   }
 
   /// Cosine similarity for L2-normalized embeddings.
-  public static func voiceSimilarity(_ embedsX: MLXArray, _ embedsY: MLXArray) -> Float {
+  static func voiceSimilarity(_ embedsX: MLXArray, _ embedsY: MLXArray) -> Float {
     var x = embedsX
     var y = embedsY
 
@@ -237,7 +237,7 @@ public class VoiceEncoder: Module {
   ///   - rate: Rate for frame step calculation
   ///   - minCoverage: Minimum coverage for partial windows
   /// - Returns: (B, E) embeddings if asSpk is false, else (E,) speaker embedding
-  public func embedsFromMels(
+  func embedsFromMels(
     mels: [MLXArray],
     melLens: [Int]? = nil,
     asSpk: Bool = false,
@@ -282,7 +282,7 @@ public class VoiceEncoder: Module {
   ///   - batchSize: Batch size for processing
   ///   - rate: Rate for frame step calculation (default 1.3)
   /// - Returns: Embeddings
-  public func embedsFromWavs(
+  func embedsFromWavs(
     wavs: [MLXArray],
     asSpk: Bool = false,
     batchSize: Int = 32,

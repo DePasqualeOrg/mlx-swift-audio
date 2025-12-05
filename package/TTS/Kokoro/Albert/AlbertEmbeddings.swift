@@ -5,30 +5,32 @@ import Foundation
 import MLX
 import MLXNN
 
-class AlbertEmbeddings {
-  let wordEmbeddings: Embedding
-  let positionEmbeddings: Embedding
-  let tokenTypeEmbeddings: Embedding
-  let layerNorm: LayerNorm
+class AlbertEmbeddings: Module {
+  @ModuleInfo(key: "word_embeddings") var wordEmbeddings: Embedding
+  @ModuleInfo(key: "position_embeddings") var positionEmbeddings: Embedding
+  @ModuleInfo(key: "token_type_embeddings") var tokenTypeEmbeddings: Embedding
+  @ModuleInfo(key: "LayerNorm") var layerNorm: LayerNorm
   let dropout: Dropout
 
-  init(weights: [String: MLXArray], config: AlbertModelArgs) {
-    wordEmbeddings = Embedding(weight: weights["bert.embeddings.word_embeddings.weight"]!)
-    positionEmbeddings = Embedding(weight: weights["bert.embeddings.position_embeddings.weight"]!)
-    tokenTypeEmbeddings = Embedding(weight: weights["bert.embeddings.token_type_embeddings.weight"]!)
-    layerNorm = LayerNorm(dimensions: config.embeddingSize, eps: config.layerNormEps)
+  init(config: AlbertConfig) {
     dropout = Dropout(p: config.hiddenDropoutProb)
-    let layerNormWeights = weights["bert.embeddings.LayerNorm.weight"]!
-    let layerNormBiases = weights["bert.embeddings.LayerNorm.bias"]!
 
-    guard layerNormBiases.count == config.embeddingSize, layerNormWeights.count == config.embeddingSize else {
-      fatalError("Wrong shape for AlbertEmbeddings LayerNorm bias or weights!")
-    }
-
-    for i in 0 ..< layerNormBiases.shape[0] {
-      layerNorm.bias![i] = layerNormBiases[i]
-      layerNorm.weight![i] = layerNormWeights[i]
-    }
+    _wordEmbeddings.wrappedValue = Embedding(
+      embeddingCount: config.vocabSize,
+      dimensions: config.embeddingSize,
+    )
+    _positionEmbeddings.wrappedValue = Embedding(
+      embeddingCount: config.maxPositionEmbeddings,
+      dimensions: config.embeddingSize,
+    )
+    _tokenTypeEmbeddings.wrappedValue = Embedding(
+      embeddingCount: config.typeVocabSize,
+      dimensions: config.embeddingSize,
+    )
+    _layerNorm.wrappedValue = LayerNorm(
+      dimensions: config.embeddingSize,
+      eps: config.layerNormEps,
+    )
   }
 
   func callAsFunction(

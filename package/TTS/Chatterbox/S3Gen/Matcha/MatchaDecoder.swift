@@ -13,15 +13,15 @@ import MLXNN
 // MARK: - Sinusoidal Position Embeddings
 
 /// Sinusoidal position embeddings for timestep encoding
-public class SinusoidalPosEmb: Module {
+class SinusoidalPosEmb: Module {
   let dim: Int
 
-  public init(dim: Int) {
+  init(dim: Int) {
     precondition(dim % 2 == 0, "SinusoidalPosEmb requires dim to be even")
     self.dim = dim
   }
 
-  public func callAsFunction(_ x: MLXArray, scale: Float = 1000) -> MLXArray {
+  func callAsFunction(_ x: MLXArray, scale: Float = 1000) -> MLXArray {
     var input = x
     if input.ndim < 1 {
       input = input.expandedDimensions(axis: 0)
@@ -43,18 +43,18 @@ public class SinusoidalPosEmb: Module {
 // MARK: - Timestep Embedding
 
 /// MLP for timestep embedding
-public class TimestepEmbedding: Module {
+class TimestepEmbedding: Module {
   @ModuleInfo(key: "linear_1") var linear1: Linear
   @ModuleInfo(key: "linear_2") var linear2: Linear
   let actFn: String
 
-  public init(inChannels: Int, timeEmbedDim: Int, actFn: String = "silu") {
+  init(inChannels: Int, timeEmbedDim: Int, actFn: String = "silu") {
     _linear1.wrappedValue = Linear(inChannels, timeEmbedDim)
     _linear2.wrappedValue = Linear(timeEmbedDim, timeEmbedDim)
     self.actFn = actFn
   }
 
-  public func callAsFunction(_ sample: MLXArray) -> MLXArray {
+  func callAsFunction(_ sample: MLXArray) -> MLXArray {
     var h = linear1(sample)
     h = actFn == "silu" ? silu(h) : gelu(h)
     h = linear2(h)
@@ -65,16 +65,16 @@ public class TimestepEmbedding: Module {
 // MARK: - Block1D
 
 /// 1D convolutional block with group norm
-public class Block1D: Module {
+class Block1D: Module {
   @ModuleInfo(key: "conv") var conv: Conv1d
   @ModuleInfo(key: "norm") var norm: GroupNorm
 
-  public init(dim: Int, dimOut: Int, groups: Int = 8) {
+  init(dim: Int, dimOut: Int, groups: Int = 8) {
     _conv.wrappedValue = Conv1d(inputChannels: dim, outputChannels: dimOut, kernelSize: 3, padding: 1)
     _norm.wrappedValue = GroupNorm(groupCount: groups, dimensions: dimOut)
   }
 
-  public func callAsFunction(_ x: MLXArray, mask: MLXArray) -> MLXArray {
+  func callAsFunction(_ x: MLXArray, mask: MLXArray) -> MLXArray {
     // x is (B, C, T) but MLX Conv1d expects (B, T, C)
     var output = (x * mask).swappedAxes(1, 2) // (B, C, T) -> (B, T, C)
     output = conv(output)
@@ -88,20 +88,20 @@ public class Block1D: Module {
 // MARK: - ResnetBlock1D
 
 /// 1D ResNet block with time embedding
-public class ResnetBlock1D: Module {
+class ResnetBlock1D: Module {
   @ModuleInfo(key: "mlp_linear") var mlpLinear: Linear
   @ModuleInfo(key: "block1") var block1: Block1D
   @ModuleInfo(key: "block2") var block2: Block1D
   @ModuleInfo(key: "res_conv") var resConv: Conv1d
 
-  public init(dim: Int, dimOut: Int, timeEmbDim: Int, groups: Int = 8) {
+  init(dim: Int, dimOut: Int, timeEmbDim: Int, groups: Int = 8) {
     _mlpLinear.wrappedValue = Linear(timeEmbDim, dimOut)
     _block1.wrappedValue = Block1D(dim: dim, dimOut: dimOut, groups: groups)
     _block2.wrappedValue = Block1D(dim: dimOut, dimOut: dimOut, groups: groups)
     _resConv.wrappedValue = Conv1d(inputChannels: dim, outputChannels: dimOut, kernelSize: 1)
   }
 
-  public func callAsFunction(_ x: MLXArray, mask: MLXArray, timeEmb: MLXArray) -> MLXArray {
+  func callAsFunction(_ x: MLXArray, mask: MLXArray, timeEmb: MLXArray) -> MLXArray {
     var h = block1(x, mask: mask)
     // Original: h += self.mlp(time_emb) where mlp = Sequential(Mish(), Linear())
     h = h + mlpLinear(mish(timeEmb)).expandedDimensions(axis: -1)
@@ -119,14 +119,14 @@ public class ResnetBlock1D: Module {
 // MARK: - Downsample1D
 
 /// 1D downsampling with stride-2 convolution
-public class Downsample1D: Module {
+class Downsample1D: Module {
   @ModuleInfo(key: "conv") var conv: Conv1d
 
-  public init(dim: Int) {
+  init(dim: Int) {
     _conv.wrappedValue = Conv1d(inputChannels: dim, outputChannels: dim, kernelSize: 3, stride: 2, padding: 1)
   }
 
-  public func callAsFunction(_ x: MLXArray) -> MLXArray {
+  func callAsFunction(_ x: MLXArray) -> MLXArray {
     // x is (B, C, T) but MLX Conv1d expects (B, T, C)
     var output = x.swappedAxes(1, 2)
     output = conv(output)
@@ -138,13 +138,13 @@ public class Downsample1D: Module {
 // MARK: - Upsample1D
 
 /// 1D upsampling with transposed convolution
-public class MatchaUpsample1D: Module {
+class MatchaUpsample1D: Module {
   let channels: Int
   let useConvTranspose: Bool
 
   @ModuleInfo(key: "conv") var conv: ConvTransposed1d
 
-  public init(channels: Int, useConvTranspose: Bool = true) {
+  init(channels: Int, useConvTranspose: Bool = true) {
     self.channels = channels
     self.useConvTranspose = useConvTranspose
 
@@ -162,7 +162,7 @@ public class MatchaUpsample1D: Module {
     }
   }
 
-  public func callAsFunction(_ x: MLXArray) -> MLXArray {
+  func callAsFunction(_ x: MLXArray) -> MLXArray {
     if useConvTranspose {
       // x is (B, C, T) but MLX ConvTranspose1d expects (B, T, C)
       var output = x.swappedAxes(1, 2)
@@ -179,11 +179,11 @@ public class MatchaUpsample1D: Module {
 // MARK: - Mish Activation
 
 /// Mish activation function: x * tanh(softplus(x))
-public func mish(_ x: MLXArray) -> MLXArray {
+func mish(_ x: MLXArray) -> MLXArray {
   x * tanh(softplus(x))
 }
 
 /// Softplus activation function: log(1 + exp(x))
-public func softplus(_ x: MLXArray) -> MLXArray {
+func softplus(_ x: MLXArray) -> MLXArray {
   MLX.log(1 + MLX.exp(x))
 }

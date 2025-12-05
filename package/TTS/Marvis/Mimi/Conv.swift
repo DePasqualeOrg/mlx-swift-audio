@@ -121,10 +121,10 @@ final class NormConv1d: Module {
     stride: Int = 1, padding: Int = 0,
     groups: Int = 1, dilation: Int = 1, bias: Bool = true,
   ) {
-    _conv = ModuleInfo(wrappedValue: MimiConv1d(
+    _conv.wrappedValue = MimiConv1d(
       inChannels: inChannels, outChannels: outChannels, ksize: ksize,
       stride: stride, padding: padding, groups: groups, dilation: dilation, bias: bias,
-    ))
+    )
   }
 
   func callAsFunction(_ xs: MLXArray) -> MLXArray { conv(xs) }
@@ -138,10 +138,10 @@ final class NormConvTranspose1d: Module {
     stride: Int = 1, padding: Int = 0,
     groups: Int = 1, bias: Bool = true,
   ) {
-    _convtr = ModuleInfo(wrappedValue: MimiConvTranspose1d(
+    _convtr.wrappedValue = MimiConvTranspose1d(
       inChannels: inChannels, outChannels: outChannels, ksize: ksize,
       stride: stride, padding: padding, groups: groups, bias: bias,
-    ))
+    )
   }
 
   func callAsFunction(_ xs: MLXArray) -> MLXArray { convtr(xs) }
@@ -192,10 +192,10 @@ final class StreamableConv1d: Module {
     self.causal = causal
     self.padMode = padMode
     ksizeBase = ksize
-    _conv = ModuleInfo(wrappedValue: NormConv1d(
+    _conv.wrappedValue = NormConv1d(
       inChannels: inChannels, outChannels: outChannels, ksize: ksize,
       stride: stride, padding: 0, groups: groups, dilation: dilation, bias: bias,
-    ))
+    )
     self.outChannels = outChannels
   }
 
@@ -284,10 +284,10 @@ final class StreamableConvTranspose1d: Module {
   ) {
     self.causal = causal
     self.ksize = ksize
-    _convtr = ModuleInfo(wrappedValue: NormConvTranspose1d(
+    _convtr.wrappedValue = NormConvTranspose1d(
       inChannels: inChannels, outChannels: outChannels, ksize: ksize,
       stride: stride, padding: 0, groups: groups, bias: bias,
-    ))
+    )
     self.outChannels = outChannels
   }
 
@@ -337,11 +337,11 @@ final class ConvDownsample1d: Module {
   @ModuleInfo var conv: StreamableConv1d
 
   init(stride: Int, dim: Int, causal: Bool) {
-    _conv = ModuleInfo(wrappedValue: StreamableConv1d(
+    _conv.wrappedValue = StreamableConv1d(
       inChannels: dim, outChannels: dim, ksize: 2 * stride,
       stride: stride, dilation: 1, groups: 1, bias: false,
       causal: causal, padMode: .edge,
-    ))
+    )
   }
 
   func resetState() { conv.resetState() }
@@ -353,10 +353,10 @@ final class ConvTrUpsample1d: Module {
   @ModuleInfo var convtr: StreamableConvTranspose1d
 
   init(stride: Int, dim: Int, causal: Bool) {
-    _convtr = ModuleInfo(wrappedValue: StreamableConvTranspose1d(
+    _convtr.wrappedValue = StreamableConvTranspose1d(
       inChannels: dim, outChannels: dim, ksize: 2 * stride,
       stride: stride, groups: dim, bias: false, causal: causal,
-    ))
+    )
   }
 
   func resetState() { convtr.resetState() }

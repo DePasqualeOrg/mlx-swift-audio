@@ -2,22 +2,23 @@
 //  ConvWeightedTranspose1d.swift
 //  MLXAudio
 //
-//  Created by Ben Harraway on 14/05/2025.
+//  ConvTranspose1d with weight normalization for SNAC decoder
 //
 import Foundation
 import MLX
 import MLXNN
 
-/// ConvTranspose1d with weight normalization
-struct ConvWeightedTranspose1d {
-  var weightG: MLXArray
-  var weightV: MLXArray
-  var bias: MLXArray?
+/// ConvTranspose1d with weight normalization for SNAC decoder
+/// Weight keys: weight_g, weight_v, bias
+class WNConvTranspose1d: Module {
+  @ModuleInfo(key: "weight_g") var weightG: MLXArray
+  @ModuleInfo(key: "weight_v") var weightV: MLXArray
+  @ModuleInfo var bias: MLXArray?
 
   let stride: Int
   let padding: Int
   let outputPadding: Int
-  let dilation: Int // Dilation might not be directly supported by MLX convTranspose1d, check API
+  let dilation: Int
   let groups: Int
 
   // Helper for normalizing weight_v, equivalent to Python's normalize_weight(weight_v, except_dim=0)
@@ -34,26 +35,38 @@ struct ConvWeightedTranspose1d {
   }
 
   init(
-    weightG: MLXArray, // Expected shape [in_channels, 1, 1]
-    weightV: MLXArray, // Expected shape [in_channels, kernel_size, out_channels_per_group]
-    bias: MLXArray?,
+    inChannels: Int,
+    outChannels: Int,
+    kernelSize: Int,
     stride: Int = 1,
     padding: Int = 0,
     outputPadding: Int = 0,
-    dilation: Int = 1, // Default dilation
+    dilation: Int = 1,
     groups: Int = 1,
+    bias: Bool = true,
   ) {
     self.stride = stride
     self.padding = padding
     self.outputPadding = outputPadding
-    self.dilation = dilation // Store dilation
+    self.dilation = dilation
     self.groups = groups
-    self.weightG = weightG
-    self.weightV = weightV
-    self.bias = bias
+
     if dilation != 1 {
       Log.tts.warning("MLX.convTranspose1d might not support dilation != 1.")
     }
+
+    // Initialize with placeholder values - will be replaced by model.update(parameters:)
+    let scale = sqrt(1.0 / Double(inChannels * kernelSize))
+    let weightInit = MLXRandom.uniform(
+      low: -scale,
+      high: scale,
+      [inChannels, kernelSize, outChannels / groups],
+    )
+    let normWeight = Self.normalizeWeightV(weightInit)
+
+    _weightG.wrappedValue = normWeight
+    _weightV.wrappedValue = weightInit / (normWeight + 1e-12)
+    _bias.wrappedValue = bias ? MLX.zeros([outChannels]) : nil
   }
 
   func callAsFunction(_ x: MLXArray) -> MLXArray {

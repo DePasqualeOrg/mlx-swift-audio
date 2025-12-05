@@ -13,7 +13,7 @@ import MLXNN
 // MARK: - Rotary Position Embeddings
 
 /// Precompute frequency tensor for rotary embeddings
-public func precomputeFreqsCis(
+func precomputeFreqsCis(
   dim: Int,
   end: Int,
   theta: Float = 10000.0,
@@ -40,7 +40,7 @@ public func precomputeFreqsCis(
 }
 
 /// Apply rotary embeddings to query and key tensors
-public func applyRotaryEmb(
+func applyRotaryEmb(
   xq: MLXArray,
   xk: MLXArray,
   cos: MLXArray,
@@ -73,7 +73,7 @@ public func applyRotaryEmb(
 // MARK: - Multi-Head Attention
 
 /// Basic multi-head attention
-public class MultiHeadAttention: Module {
+class MultiHeadAttention: Module {
   let nHead: Int
 
   @ModuleInfo(key: "query") var query: Linear
@@ -81,7 +81,7 @@ public class MultiHeadAttention: Module {
   @ModuleInfo(key: "value") var value: Linear
   @ModuleInfo(key: "out") var out: Linear
 
-  public init(nState: Int, nHead: Int) {
+  init(nState: Int, nHead: Int) {
     self.nHead = nHead
     _query.wrappedValue = Linear(nState, nState)
     _key.wrappedValue = Linear(nState, nState, bias: false)
@@ -89,7 +89,7 @@ public class MultiHeadAttention: Module {
     _out.wrappedValue = Linear(nState, nState)
   }
 
-  public func callAsFunction(
+  func callAsFunction(
     _ x: MLXArray,
     mask: MLXArray? = nil,
   ) -> (MLXArray, MLXArray?) {
@@ -101,7 +101,7 @@ public class MultiHeadAttention: Module {
     return (out(wv), qk)
   }
 
-  public func qkvAttention(
+  func qkvAttention(
     q: MLXArray,
     k: MLXArray,
     v: MLXArray,
@@ -132,24 +132,24 @@ public class MultiHeadAttention: Module {
 // MARK: - FSQ Codebook
 
 /// Finite Scalar Quantization Codebook
-public class FSQCodebook: Module {
+class FSQCodebook: Module {
   let level: Int
 
   @ModuleInfo(key: "project_down") var projectDown: Linear
 
-  public init(dim: Int, level: Int = 3) {
+  init(dim: Int, level: Int = 3) {
     self.level = level
     _projectDown.wrappedValue = Linear(dim, 8)
   }
 
-  public func preprocess(_ x: MLXArray) -> MLXArray {
+  func preprocess(_ x: MLXArray) -> MLXArray {
     // Rearrange: ... d -> (...) d
     let lastDim = x.shape[x.ndim - 1]
     let totalElements = x.shape.dropLast().reduce(1, *)
     return x.reshaped([totalElements, lastDim])
   }
 
-  public func encode(_ x: MLXArray) -> MLXArray {
+  func encode(_ x: MLXArray) -> MLXArray {
     let xShape = x.shape
     // Pre-process
     let xFlat = preprocess(x)
@@ -174,18 +174,18 @@ public class FSQCodebook: Module {
 // MARK: - FSQ Vector Quantization
 
 /// Finite Scalar Quantization Vector Quantization
-public class FSQVectorQuantization: Module {
+class FSQVectorQuantization: Module {
   let codebookSize: Int
 
   @ModuleInfo(key: "fsq_codebook") var fsqCodebook: FSQCodebook
 
-  public init(dim: Int, codebookSize: Int) {
+  init(dim: Int, codebookSize: Int) {
     precondition(codebookSize == 6561, "FSQ codebook size must be 3^8 = 6561")
     self.codebookSize = codebookSize
     _fsqCodebook.wrappedValue = FSQCodebook(dim: dim, level: 3)
   }
 
-  public func encode(_ x: MLXArray) -> MLXArray {
+  func encode(_ x: MLXArray) -> MLXArray {
     fsqCodebook.encode(x)
   }
 }
@@ -193,7 +193,7 @@ public class FSQVectorQuantization: Module {
 // MARK: - FSMN Multi-Head Attention
 
 /// Multi-head attention with FSMN (Feedforward Sequential Memory Network)
-public class FSMNMultiHeadAttention: Module {
+class FSMNMultiHeadAttention: Module {
   let nHead: Int
   let leftPadding: Int
   let rightPadding: Int
@@ -204,7 +204,7 @@ public class FSMNMultiHeadAttention: Module {
   @ModuleInfo(key: "out") var out: Linear
   @ModuleInfo(key: "fsmn_block") var fsmnBlock: Conv1d
 
-  public init(nState: Int, nHead: Int, kernelSize: Int = 31) {
+  init(nState: Int, nHead: Int, kernelSize: Int = 31) {
     self.nHead = nHead
     leftPadding = (kernelSize - 1) / 2
     rightPadding = kernelSize - 1 - leftPadding
@@ -225,7 +225,7 @@ public class FSMNMultiHeadAttention: Module {
     )
   }
 
-  public func forwardFsmn(_ inputs: MLXArray, mask: MLXArray? = nil) -> MLXArray {
+  func forwardFsmn(_ inputs: MLXArray, mask: MLXArray? = nil) -> MLXArray {
     let b = inputs.shape[0]
     let t = inputs.shape[1]
     let n = inputs.shape[2]
@@ -252,7 +252,7 @@ public class FSMNMultiHeadAttention: Module {
     return x
   }
 
-  public func qkvAttention(
+  func qkvAttention(
     q: MLXArray,
     k: MLXArray,
     v: MLXArray,
@@ -298,7 +298,7 @@ public class FSMNMultiHeadAttention: Module {
     return (outputReshaped, nil, fsmMemory)
   }
 
-  public func callAsFunction(
+  func callAsFunction(
     _ x: MLXArray,
     mask: MLXArray? = nil,
     maskPad: MLXArray? = nil,
@@ -320,13 +320,13 @@ public class FSMNMultiHeadAttention: Module {
 // MARK: - Residual Attention Block
 
 /// Residual attention block with FSMN
-public class S3ResidualAttentionBlock: Module {
+class S3ResidualAttentionBlock: Module {
   @ModuleInfo(key: "attn") var attn: FSMNMultiHeadAttention
   @ModuleInfo(key: "attn_ln") var attnLn: LayerNorm
   @ModuleInfo(key: "mlp") var mlp: Sequential
   @ModuleInfo(key: "mlp_ln") var mlpLn: LayerNorm
 
-  public init(nState: Int, nHead: Int, kernelSize: Int = 31) {
+  init(nState: Int, nHead: Int, kernelSize: Int = 31) {
     _attn.wrappedValue = FSMNMultiHeadAttention(
       nState: nState,
       nHead: nHead,
@@ -343,7 +343,7 @@ public class S3ResidualAttentionBlock: Module {
     _mlpLn.wrappedValue = LayerNorm(dimensions: nState)
   }
 
-  public func callAsFunction(
+  func callAsFunction(
     _ x: MLXArray,
     mask: MLXArray? = nil,
     maskPad: MLXArray? = nil,
@@ -358,7 +358,7 @@ public class S3ResidualAttentionBlock: Module {
 // MARK: - Audio Encoder V2
 
 /// Audio encoder for S3TokenizerV2
-public class AudioEncoderV2: Module {
+class AudioEncoderV2: Module {
   let stride: Int
   /// Precomputed RoPE frequencies - underscore prefix excludes from parameter validation
   var _freqsCisCos: MLXArray
@@ -368,7 +368,7 @@ public class AudioEncoderV2: Module {
   @ModuleInfo(key: "conv2") var conv2: Conv1d
   @ModuleInfo(key: "blocks") var blocks: [S3ResidualAttentionBlock]
 
-  public init(nMels: Int, nState: Int, nHead: Int, nLayer: Int, stride: Int) {
+  init(nMels: Int, nState: Int, nHead: Int, nLayer: Int, stride: Int) {
     self.stride = stride
 
     _conv1.wrappedValue = Conv1d(
@@ -395,7 +395,7 @@ public class AudioEncoderV2: Module {
     }
   }
 
-  public func callAsFunction(_ x: MLXArray, xLen: MLXArray) -> (MLXArray, MLXArray) {
+  func callAsFunction(_ x: MLXArray, xLen: MLXArray) -> (MLXArray, MLXArray) {
     // x: (batch_size, n_mels, T)
     // xLen: (batch_size,)
 
@@ -434,13 +434,13 @@ public class AudioEncoderV2: Module {
 // MARK: - S3TokenizerV2
 
 /// S3 tokenizer v2 implementation
-public class S3TokenizerV2: Module {
-  public let config: S3TokenizerModelConfig
+class S3TokenizerV2: Module {
+  let config: S3TokenizerModelConfig
 
   @ModuleInfo(key: "encoder") var encoder: AudioEncoderV2
   @ModuleInfo(key: "quantizer") var quantizer: FSQVectorQuantization
 
-  public init(name: String = "speech_tokenizer_v2_25hz", config: S3TokenizerModelConfig = S3TokenizerModelConfig()) {
+  init(name: String = "speech_tokenizer_v2_25hz", config: S3TokenizerModelConfig = S3TokenizerModelConfig()) {
     var configUpdated = config
     if !name.contains("v1") {
       precondition(name.contains("v2") || name.isEmpty, "S3TokenizerV2 requires v2 in name or empty name")
@@ -461,12 +461,12 @@ public class S3TokenizerV2: Module {
     )
   }
 
-  public func callAsFunction(_ mel: MLXArray, melLen: MLXArray) -> (MLXArray, MLXArray) {
+  func callAsFunction(_ mel: MLXArray, melLen: MLXArray) -> (MLXArray, MLXArray) {
     quantize(mel: mel, melLen: melLen)
   }
 
   /// Quantize mel spectrogram to tokens
-  public func quantize(mel: MLXArray, melLen: MLXArray) -> (MLXArray, MLXArray) {
+  func quantize(mel: MLXArray, melLen: MLXArray) -> (MLXArray, MLXArray) {
     // Check if any audio exceeds 30 seconds
     // At 16kHz with hop_length=160: 30s = 3000 frames
     let maxFrames = 3000
@@ -645,7 +645,7 @@ public class S3TokenizerV2: Module {
   }
 
   /// Simple quantization without long audio handling
-  public func quantizeSimple(mel: MLXArray, melLen: MLXArray) -> (MLXArray, MLXArray) {
+  func quantizeSimple(mel: MLXArray, melLen: MLXArray) -> (MLXArray, MLXArray) {
     let (hidden, codeLen) = encoder(mel, xLen: melLen)
     let code = quantizer.encode(hidden)
     return (code, codeLen)

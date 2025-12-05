@@ -5,38 +5,39 @@ import Foundation
 import MLX
 import MLXNN
 
-class Generator {
+class Generator: Module {
   let numKernels: Int
   let numUpsamples: Int
-  let mSource: KokoroSourceModuleHnNSF
-  let f0Upsample: Upsample
   let postNFFt: Int
-  var noiseConvs: [Conv1dInference]
-  var noiseRes: [AdaINResBlock1]
-  var ups: [ConvWeighted]
-  var resBlocks: [AdaINResBlock1]
-  let convPost: ConvWeighted
+
+  @ModuleInfo(key: "m_source") var mSource: KokoroSourceModuleHnNSF
+  let f0Upsample: Upsample
+  @ModuleInfo(key: "noise_convs") var noiseConvs: [Conv1dInference]
+  @ModuleInfo(key: "noise_res") var noiseRes: [AdaINResBlock1]
+  @ModuleInfo var ups: [ConvWeighted]
+  @ModuleInfo var resblocks: [AdaINResBlock1]
+  @ModuleInfo(key: "conv_post") var convPost: ConvWeighted
   let reflectionPad: ReflectionPad1d
   let stft: MLXSTFT
 
-  init(weights: [String: MLXArray],
-       styleDim: Int,
-       resblockKernelSizes: [Int],
-       upsampleRates: [Int],
-       upsampleInitialChannel: Int,
-       resblockDilationSizes: [[Int]],
-       upsampleKernelSizes: [Int],
-       genIstftNFft: Int,
-       genIstftHopSize: Int)
-  {
+  init(
+    styleDim: Int,
+    resblockKernelSizes: [Int],
+    upsampleRates: [Int],
+    upsampleInitialChannel: Int,
+    resblockDilationSizes: [[Int]],
+    upsampleKernelSizes: [Int],
+    genIstftNFft: Int,
+    genIstftHopSize: Int,
+  ) {
     numKernels = resblockKernelSizes.count
     numUpsamples = upsampleRates.count
+    postNFFt = genIstftNFft
 
     let upsampleScaleNum = MLX.product(MLXArray(upsampleRates)) * genIstftHopSize
     let upsampleScaleNumVal: Int = upsampleScaleNum.item()
 
-    mSource = KokoroSourceModuleHnNSF(
-      weights: weights,
+    _mSource.wrappedValue = KokoroSourceModuleHnNSF(
       samplingRate: 24000,
       upsampleScale: upsampleScaleNum.item(),
       harmonicNum: 8,
@@ -45,92 +46,74 @@ class Generator {
 
     f0Upsample = Upsample(scaleFactor: .float(Float(upsampleScaleNumVal)))
 
-    noiseConvs = []
-    noiseRes = []
-    ups = []
-
-    for (i, (u, k)) in zip(upsampleRates, upsampleKernelSizes).enumerated() {
-      ups.append(
-        ConvWeighted(
-          weightG: weights["decoder.generator.ups.\(i).weight_g"]!,
-          weightV: weights["decoder.generator.ups.\(i).weight_v"]!,
-          bias: weights["decoder.generator.ups.\(i).bias"]!,
-          stride: u,
-          padding: (k - u) / 2,
-        ),
-      )
+    var upsArray: [ConvWeighted] = []
+    for (u, k) in zip(upsampleRates, upsampleKernelSizes) {
+      upsArray.append(ConvWeighted(
+        inChannels: upsampleInitialChannel / Int(pow(2.0, Double(upsArray.count))),
+        outChannels: upsampleInitialChannel / Int(pow(2.0, Double(upsArray.count + 1))),
+        kernelSize: k,
+        stride: u,
+        padding: (k - u) / 2,
+      ))
     }
+    _ups.wrappedValue = upsArray
 
-    resBlocks = []
-    for i in 0 ..< ups.count {
+    var resBlocksArray: [AdaINResBlock1] = []
+    var noiseConvsArray: [Conv1dInference] = []
+    var noiseResArray: [AdaINResBlock1] = []
+
+    for i in 0 ..< upsArray.count {
       let ch = upsampleInitialChannel / Int(pow(2.0, Double(i + 1)))
-      for (j, (k, d)) in zip(resblockKernelSizes, resblockDilationSizes).enumerated() {
-        resBlocks.append(
-          AdaINResBlock1(
-            weights: weights,
-            weightPrefixKey: "decoder.generator.resblocks.\((i * resblockKernelSizes.count) + j)",
-            channels: ch,
-            kernelSize: k,
-            dilation: d,
-            styleDim: styleDim,
-          ),
-        )
+      for (k, d) in zip(resblockKernelSizes, resblockDilationSizes) {
+        resBlocksArray.append(AdaINResBlock1(
+          channels: ch,
+          kernelSize: k,
+          dilation: d,
+          styleDim: styleDim,
+        ))
       }
 
       let cCur = ch
       if i + 1 < upsampleRates.count {
         let strideF0: Int = MLX.product(MLXArray(upsampleRates)[(i + 1)...]).item()
-        noiseConvs.append(
-          Conv1dInference(
-            inputChannels: genIstftNFft + 2,
-            outputChannels: cCur,
-            kernelSize: strideF0 * 2,
-            stride: strideF0,
-            padding: (strideF0 + 1) / 2,
-            weight: weights["decoder.generator.noise_convs.\(i).weight"]!,
-            bias: weights["decoder.generator.noise_convs.\(i).bias"]!,
-          ),
-        )
-
-        noiseRes.append(
-          AdaINResBlock1(
-            weights: weights,
-            weightPrefixKey: "decoder.generator.noise_res.\(i)",
-            channels: cCur,
-            kernelSize: 7,
-            dilation: [1, 3, 5],
-            styleDim: styleDim,
-          ),
-        )
+        noiseConvsArray.append(Conv1dInference(
+          inChannels: genIstftNFft + 2,
+          outChannels: cCur,
+          kernelSize: strideF0 * 2,
+          stride: strideF0,
+          padding: (strideF0 + 1) / 2,
+        ))
+        noiseResArray.append(AdaINResBlock1(
+          channels: cCur,
+          kernelSize: 7,
+          dilation: [1, 3, 5],
+          styleDim: styleDim,
+        ))
       } else {
-        noiseConvs.append(
-          Conv1dInference(
-            inputChannels: genIstftNFft + 2,
-            outputChannels: cCur,
-            kernelSize: 1,
-            weight: weights["decoder.generator.noise_convs.\(i).weight"]!,
-            bias: weights["decoder.generator.noise_convs.\(i).bias"]!,
-          ),
-        )
-        noiseRes.append(
-          AdaINResBlock1(
-            weights: weights,
-            weightPrefixKey: "decoder.generator.noise_res.\(i)",
-            channels: cCur,
-            kernelSize: 11,
-            dilation: [1, 3, 5],
-            styleDim: styleDim,
-          ),
-        )
+        noiseConvsArray.append(Conv1dInference(
+          inChannels: genIstftNFft + 2,
+          outChannels: cCur,
+          kernelSize: 1,
+        ))
+        noiseResArray.append(AdaINResBlock1(
+          channels: cCur,
+          kernelSize: 11,
+          dilation: [1, 3, 5],
+          styleDim: styleDim,
+        ))
       }
     }
 
-    postNFFt = genIstftNFft
+    _resblocks.wrappedValue = resBlocksArray
+    _noiseConvs.wrappedValue = noiseConvsArray
+    _noiseRes.wrappedValue = noiseResArray
 
-    convPost = ConvWeighted(
-      weightG: weights["decoder.generator.conv_post.weight_g"]!,
-      weightV: weights["decoder.generator.conv_post.weight_v"]!,
-      bias: weights["decoder.generator.conv_post.bias"]!,
+    // conv_post output channels = (genIstftNFft / 2 + 1) * 2 for spec and phase
+    let lastCh = upsampleInitialChannel / Int(pow(2.0, Double(upsampleRates.count)))
+    _convPost.wrappedValue = ConvWeighted(
+      inChannels: lastCh,
+      outChannels: (genIstftNFft / 2 + 1) * 2,
+      kernelSize: 7,
       stride: 1,
       padding: 3,
     )
@@ -156,21 +139,21 @@ class Generator {
     harSource = MLX.squeezed(harSource.transposed(0, 2, 1), axis: 1)
     let (harSpec, harPhase) = stft.transform(inputData: harSource)
     var har = MLX.concatenated([harSpec, harPhase], axis: 1)
-    har = MLX.swappedAxes(har, 2, 1)
+    har = har.swappedAxes(1, 2)
 
     var newX = x
     for i in 0 ..< numUpsamples {
       newX = LeakyReLU(negativeSlope: 0.1)(newX)
       var xSource = noiseConvs[i](har)
-      xSource = MLX.swappedAxes(xSource, 2, 1)
+      xSource = xSource.swappedAxes(1, 2)
       xSource = noiseRes[i](xSource, s)
 
-      newX = MLX.swappedAxes(newX, 2, 1)
+      newX = newX.swappedAxes(1, 2)
       let upsi = ups[i]
       newX = upsi.callAsFunction(newX, conv: { a, b, c, d, e, f, g in
         MLX.convTransposed1d(a, b, stride: c, padding: d, dilation: e, outputPadding: 0, groups: f, stream: g)
       })
-      newX = MLX.swappedAxes(newX, 2, 1)
+      newX = newX.swappedAxes(1, 2)
 
       if i == numUpsamples - 1 {
         newX = reflectionPad(newX)
@@ -180,9 +163,9 @@ class Generator {
       var xs: MLXArray?
       for j in 0 ..< numKernels {
         if xs == nil {
-          xs = resBlocks[i * numKernels + j](newX, s)
+          xs = resblocks[i * numKernels + j](newX, s)
         } else {
-          let temp = resBlocks[i * numKernels + j](newX, s)
+          let temp = resblocks[i * numKernels + j](newX, s)
           xs = xs! + temp
         }
       }
@@ -191,9 +174,9 @@ class Generator {
 
     newX = LeakyReLU(negativeSlope: 0.01)(newX)
 
-    newX = MLX.swappedAxes(newX, 2, 1)
+    newX = newX.swappedAxes(1, 2)
     newX = convPost(newX, conv: MLX.conv1d)
-    newX = MLX.swappedAxes(newX, 2, 1)
+    newX = newX.swappedAxes(1, 2)
 
     let spec = MLX.exp(newX[0..., 0 ..< (postNFFt / 2 + 1), 0...])
     let phase = MLX.sin(newX[0..., (postNFFt / 2 + 1)..., 0...])

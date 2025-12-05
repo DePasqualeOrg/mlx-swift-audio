@@ -92,7 +92,7 @@ public final class ChatterboxEngine: TTSEngine {
 
   // MARK: - Private Properties
 
-  @ObservationIgnored private var session: ChatterboxSession?
+  @ObservationIgnored private var chatterboxTTS: ChatterboxTTS?
   @ObservationIgnored private let audioPlayer = AudioSamplePlayer(sampleRate: TTSProvider.chatterbox.sampleRate)
   @ObservationIgnored private var generationTask: Task<Void, Never>?
   @ObservationIgnored private var defaultReferenceAudio: ChatterboxReferenceAudio?
@@ -118,8 +118,8 @@ public final class ChatterboxEngine: TTSEngine {
     Log.model.info("Loading Chatterbox TTS model...")
 
     do {
-      // Load session (actor wrapper) from Hub with weights
-      session = try await ChatterboxSession.load(
+      // Load TTS actor from Hub with weights
+      chatterboxTTS = try await ChatterboxTTS.load(
         progressHandler: progressHandler ?? { _ in },
       )
 
@@ -146,7 +146,7 @@ public final class ChatterboxEngine: TTSEngine {
     await stop()
 
     // Clear model but preserve prepared reference audio (expensive to recompute)
-    session = nil
+    chatterboxTTS = nil
     isLoaded = false
 
     Log.tts.debug("ChatterboxEngine unloaded (reference audio preserved)")
@@ -191,7 +191,7 @@ public final class ChatterboxEngine: TTSEngine {
       try await load()
     }
 
-    guard let session else {
+    guard let chatterboxTTS else {
       throw TTSError.modelNotLoaded
     }
 
@@ -203,7 +203,7 @@ public final class ChatterboxEngine: TTSEngine {
       sampleRate: sampleRate,
       exaggeration: exaggeration,
       description: description,
-      session: session,
+      tts: chatterboxTTS,
     )
   }
 
@@ -223,7 +223,7 @@ public final class ChatterboxEngine: TTSEngine {
       try await load()
     }
 
-    guard let session else {
+    guard let chatterboxTTS else {
       throw TTSError.modelNotLoaded
     }
 
@@ -235,7 +235,7 @@ public final class ChatterboxEngine: TTSEngine {
       sampleRate: sampleRate,
       exaggeration: exaggeration,
       description: description,
-      session: session,
+      tts: chatterboxTTS,
     )
   }
 
@@ -256,12 +256,12 @@ public final class ChatterboxEngine: TTSEngine {
     sampleRate: Int,
     exaggeration: Float,
     description: String,
-    session: ChatterboxSession,
+    tts: ChatterboxTTS,
   ) async -> ChatterboxReferenceAudio {
     Log.tts.debug("Preparing reference audio: \(description)")
 
     let refWav = MLXArray(samples)
-    let conditionals = await session.prepareConditionals(
+    let conditionals = await tts.prepareConditionals(
       refWav: refWav,
       refSr: sampleRate,
       exaggeration: exaggeration,
@@ -354,7 +354,7 @@ public final class ChatterboxEngine: TTSEngine {
       try await load()
     }
 
-    guard let session else {
+    guard let chatterboxTTS else {
       throw TTSError.modelNotLoaded
     }
 
@@ -383,7 +383,7 @@ public final class ChatterboxEngine: TTSEngine {
 
     do {
       // Generate audio using pre-computed conditionals
-      let samples = await session.generateAudio(
+      let samples = await chatterboxTTS.generateAudio(
         text: trimmedText,
         conditionals: ref.conditionals,
         exaggeration: exaggeration,

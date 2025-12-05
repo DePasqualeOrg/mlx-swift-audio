@@ -13,34 +13,34 @@ import MLXNN
 // MARK: - Constants
 
 /// S3Gen sample rate (24kHz for output)
-public let S3GenSr = 24000
+let S3GenSr = 24000
 
 /// S3 sample rate (16kHz for tokenizer)
-public let S3Sr = 16000
+let S3Sr = 16000
 
 /// Speech vocabulary size (3^8 = 6561)
-public let SpeechVocabSize = 6561
+let SpeechVocabSize = 6561
 
 // MARK: - Reference Dictionary
 
 /// Container for reference audio embeddings
-public struct S3GenRefDict: @unchecked Sendable {
+struct S3GenRefDict: @unchecked Sendable {
   /// Reference speech tokens (1, T_tok)
-  public var promptToken: MLXArray
+  var promptToken: MLXArray
 
   /// Reference token lengths (1,)
-  public var promptTokenLen: MLXArray
+  var promptTokenLen: MLXArray
 
   /// Reference mel features (1, T, D)
-  public var promptFeat: MLXArray
+  var promptFeat: MLXArray
 
   /// Reference mel feature lengths (1,)
-  public var promptFeatLen: MLXArray
+  var promptFeatLen: MLXArray
 
   /// Speaker embedding from x-vector model
-  public var embedding: MLXArray
+  var embedding: MLXArray
 
-  public init(
+  init(
     promptToken: MLXArray,
     promptTokenLen: MLXArray,
     promptFeat: MLXArray,
@@ -59,7 +59,7 @@ public struct S3GenRefDict: @unchecked Sendable {
 
 /// Resample audio using vectorized linear interpolation
 /// Uses MLX array operations for efficient GPU-accelerated resampling
-public func resampleAudio(_ audio: MLXArray, origSr: Int, targetSr: Int) -> MLXArray {
+func resampleAudio(_ audio: MLXArray, origSr: Int, targetSr: Int) -> MLXArray {
   if origSr == targetSr {
     return audio
   }
@@ -109,11 +109,11 @@ public func resampleAudio(_ audio: MLXArray, origSr: Int, targetSr: Int) -> MLXA
 ///
 /// This is the flow matching component that converts speech tokens to mel spectrograms
 /// using a Conformer encoder and flow matching decoder with speaker conditioning.
-public class S3Token2Mel: Module {
+class S3Token2Mel: Module {
   @ModuleInfo(key: "speaker_encoder") var speakerEncoder: CAMPPlus
   @ModuleInfo(key: "flow") var flow: CausalMaskedDiffWithXvec
 
-  override public init() {
+  override init() {
     // Speaker encoder (CAM++ for x-vector extraction)
     _speakerEncoder.wrappedValue = CAMPPlus()
 
@@ -176,7 +176,7 @@ public class S3Token2Mel: Module {
   }
 
   /// Embed reference audio for speaker conditioning
-  public func embedRef(
+  func embedRef(
     refWav: MLXArray,
     refSr: Int,
     refSpeechTokens: MLXArray,
@@ -249,7 +249,7 @@ public class S3Token2Mel: Module {
   }
 
   /// Generate mel-spectrograms from S3 speech tokens
-  public func callAsFunction(
+  func callAsFunction(
     speechTokens: MLXArray,
     refDict: S3GenRefDict,
     finalize: Bool = false,
@@ -282,12 +282,12 @@ public class S3Token2Mel: Module {
 ///
 /// This combines the flow matching decoder with the HiFi-GAN vocoder to
 /// generate high-quality waveforms from speech tokens.
-public class S3Token2Wav: S3Token2Mel {
+class S3Token2Wav: S3Token2Mel {
   @ModuleInfo(key: "mel2wav") var mel2wav: HiFTGenerator
   /// Fade-in window buffer - underscore prefix excludes from parameter validation
   var _trimFade: MLXArray
 
-  override public init() {
+  override init() {
     // F0 predictor for vocoder
     let f0Predictor = ConvRNNF0Predictor()
 
@@ -310,7 +310,7 @@ public class S3Token2Wav: S3Token2Mel {
   }
 
   /// Generate waveforms from S3 speech tokens
-  override public func callAsFunction(
+  override func callAsFunction(
     speechTokens: MLXArray,
     refDict: S3GenRefDict,
     finalize: Bool = false,
@@ -337,7 +337,7 @@ public class S3Token2Wav: S3Token2Mel {
   }
 
   /// Run only the flow matching (token-to-mel) inference
-  public func flowInference(
+  func flowInference(
     speechTokens: MLXArray,
     refDict: S3GenRefDict,
     finalize: Bool = false,
@@ -350,7 +350,7 @@ public class S3Token2Wav: S3Token2Mel {
   }
 
   /// Run only the HiFi-GAN (mel-to-wav) inference
-  public func hiftInference(
+  func hiftInference(
     speechFeat: MLXArray,
     cacheSource: MLXArray? = nil,
   ) -> (MLXArray, MLXArray) {
@@ -359,7 +359,7 @@ public class S3Token2Wav: S3Token2Mel {
   }
 
   /// Full inference pipeline with separate flow and vocoder steps
-  public func inference(
+  func inference(
     speechTokens: MLXArray,
     refDict: S3GenRefDict,
     cacheSource: MLXArray? = nil,

@@ -2,16 +2,18 @@
 //  WNConv1d.swift
 //  MLXAudio
 //
-//  Created by Ben Harraway on 14/05/2025.
+//  Weight-normalized Conv1d for SNAC decoder
 //
 import Foundation
 import MLX
 import MLXNN
 
+/// Conv1d with weight normalization for SNAC decoder
+/// Weight keys: weight_g, weight_v, bias
 class WNConv1d: Module {
-  var weightG: MLXArray
-  var weightV: MLXArray
-  var bias: MLXArray?
+  @ModuleInfo(key: "weight_g") var weightG: MLXArray
+  @ModuleInfo(key: "weight_v") var weightV: MLXArray
+  @ModuleInfo var bias: MLXArray?
 
   let kernelSize: Int
   let stride: Int
@@ -45,20 +47,18 @@ class WNConv1d: Module {
     self.dilation = dilation
     self.groups = groups
 
-    weightG = MLXArray([])
-    weightV = MLXArray([])
-    self.bias = bias ? MLX.zeros([outChannels]) : nil
-
-    super.init()
-
+    // Initialize with placeholder values - will be replaced by model.update(parameters:)
     let scale = sqrt(1.0 / Double(inChannels * kernelSize))
     let weightInit = MLXRandom.uniform(
       low: -scale,
       high: scale,
       [outChannels, kernelSize, inChannels / groups],
     )
-    weightG = Self.normalizeWeight(weightInit)
-    weightV = weightInit / (weightG + 1e-12)
+    let normWeight = Self.normalizeWeight(weightInit)
+
+    _weightG.wrappedValue = normWeight
+    _weightV.wrappedValue = weightInit / (normWeight + 1e-12)
+    _bias.wrappedValue = bias ? MLX.zeros([outChannels]) : nil
   }
 
   func callAsFunction(_ x: MLXArray) -> MLXArray {

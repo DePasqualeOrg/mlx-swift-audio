@@ -13,7 +13,7 @@ import MLXNN
 // MARK: - Configuration
 
 /// Configuration for Orpheus model (Llama 3B architecture)
-struct OrpheusConfiguration {
+struct OrpheusConfig {
   let hiddenSize: Int = 3072
   let intermediateSize: Int = 8192
   let attentionHeads: Int = 24
@@ -36,35 +36,34 @@ struct OrpheusConfiguration {
 // MARK: - Attention Module
 
 /// Multi-head attention with support for Grouped Query Attention (GQA)
-class OrpheusAttention: Module {
-  let config: OrpheusConfiguration
+private class OrpheusAttention: Module {
+  let config: OrpheusConfig
   let scale: Float
 
-  @ModuleInfo(key: "q_proj") var wq: Linear
-  @ModuleInfo(key: "k_proj") var wk: Linear
-  @ModuleInfo(key: "v_proj") var wv: Linear
-  @ModuleInfo(key: "o_proj") var wo: Linear
+  @ModuleInfo(key: "q_proj") var qProj: Linear
+  @ModuleInfo(key: "k_proj") var kProj: Linear
+  @ModuleInfo(key: "v_proj") var vProj: Linear
+  @ModuleInfo(key: "o_proj") var oProj: Linear
 
-  let rope: OrpheusRoPE
+  let rope: Llama3RoPE
 
-  init(_ config: OrpheusConfiguration) {
+  init(_ config: OrpheusConfig) {
     self.config = config
     scale = 1.0 / sqrt(Float(config.headDim))
 
-    _wq.wrappedValue = Linear(config.hiddenSize, config.attentionHeads * config.headDim, bias: false)
-    _wk.wrappedValue = Linear(config.hiddenSize, config.kvHeads * config.headDim, bias: false)
-    _wv.wrappedValue = Linear(config.hiddenSize, config.kvHeads * config.headDim, bias: false)
-    _wo.wrappedValue = Linear(config.attentionHeads * config.headDim, config.hiddenSize, bias: false)
+    _qProj.wrappedValue = Linear(config.hiddenSize, config.attentionHeads * config.headDim, bias: false)
+    _kProj.wrappedValue = Linear(config.hiddenSize, config.kvHeads * config.headDim, bias: false)
+    _vProj.wrappedValue = Linear(config.hiddenSize, config.kvHeads * config.headDim, bias: false)
+    _oProj.wrappedValue = Linear(config.attentionHeads * config.headDim, config.hiddenSize, bias: false)
 
-    rope = OrpheusRoPE(
+    rope = Llama3RoPE(
       dims: config.headDim,
       traditional: config.ropeTraditional,
       base: config.ropeTheta,
-      maxSeqLen: config.maxSeqLen,
       scaleFactor: config.ropeScaleFactor,
       lowFreqFactor: config.ropeLowFreqFactor,
       highFreqFactor: config.ropeHighFreqFactor,
-      oldContextLen: config.ropeOldContextLen,
+      oldContextLen: Float(config.ropeOldContextLen),
     )
   }
 
@@ -75,9 +74,9 @@ class OrpheusAttention: Module {
   ) -> MLXArray {
     let (B, L) = (x.dim(0), x.dim(1))
 
-    var queries = wq(x)
-    var keys = wk(x)
-    var values = wv(x)
+    var queries = qProj(x)
+    var keys = kProj(x)
+    var values = vProj(x)
 
     // Reshape for multi-head attention: [B, L, H, D] -> [B, H, L, D]
     queries = queries.reshaped(B, L, config.attentionHeads, -1).transposed(0, 2, 1, 3)
@@ -86,8 +85,8 @@ class OrpheusAttention: Module {
 
     // Apply RoPE with cache offset
     let offset = cache?.offset ?? 0
-    queries = rope.call(queries, offset: offset)
-    keys = rope.call(keys, offset: offset)
+    queries = rope(queries, offset: offset)
+    keys = rope(keys, offset: offset)
 
     // Update cache and compute attention
     let output: MLXArray
@@ -113,42 +112,27 @@ class OrpheusAttention: Module {
     // Reshape back: [B, H, L, D] -> [B, L, H*D]
     let outputReshaped = output.transposed(0, 2, 1, 3).reshaped(B, L, -1)
 
-    return wo(outputReshaped)
-  }
-}
-
-// MARK: - MLP Module
-
-/// Feed-forward network with SiLU activation (SwiGLU variant)
-class OrpheusMLP: Module, UnaryLayer {
-  @ModuleInfo(key: "gate_proj") var gate: Linear
-  @ModuleInfo(key: "down_proj") var down: Linear
-  @ModuleInfo(key: "up_proj") var up: Linear
-
-  init(_ config: OrpheusConfiguration) {
-    _gate.wrappedValue = Linear(config.hiddenSize, config.intermediateSize, bias: false)
-    _down.wrappedValue = Linear(config.intermediateSize, config.hiddenSize, bias: false)
-    _up.wrappedValue = Linear(config.hiddenSize, config.intermediateSize, bias: false)
-  }
-
-  func callAsFunction(_ x: MLXArray) -> MLXArray {
-    down(silu(gate(x)) * up(x))
+    return oProj(outputReshaped)
   }
 }
 
 // MARK: - Transformer Block
 
 /// Single transformer layer with attention and MLP
-class OrpheusTransformerBlock: Module {
+private class OrpheusTransformerBlock: Module {
   @ModuleInfo(key: "self_attn") var attention: OrpheusAttention
-  @ModuleInfo(key: "mlp") var mlp: OrpheusMLP
+  @ModuleInfo(key: "mlp") var mlp: SwiGLUMLP
 
   @ModuleInfo(key: "input_layernorm") var inputLayerNorm: RMSNorm
   @ModuleInfo(key: "post_attention_layernorm") var postAttentionLayerNorm: RMSNorm
 
-  init(_ config: OrpheusConfiguration) {
+  init(_ config: OrpheusConfig) {
     _attention.wrappedValue = OrpheusAttention(config)
-    _mlp.wrappedValue = OrpheusMLP(config)
+    _mlp.wrappedValue = SwiGLUMLP(
+      hiddenSize: config.hiddenSize,
+      intermediateSize: config.intermediateSize,
+      bias: false,
+    )
     _inputLayerNorm.wrappedValue = RMSNorm(dimensions: config.hiddenSize, eps: config.rmsNormEps)
     _postAttentionLayerNorm.wrappedValue = RMSNorm(dimensions: config.hiddenSize, eps: config.rmsNormEps)
   }
@@ -170,14 +154,14 @@ class OrpheusTransformerBlock: Module {
 
 /// Main Orpheus model (Llama architecture for TTS)
 class OrpheusModel: Module {
-  let config: OrpheusConfiguration
+  let config: OrpheusConfig
 
   @ModuleInfo(key: "embed_tokens") var embedTokens: Embedding
   @ModuleInfo(key: "norm") var norm: RMSNorm
 
-  let layers: [OrpheusTransformerBlock]
+  fileprivate let layers: [OrpheusTransformerBlock]
 
-  init(_ config: OrpheusConfiguration = OrpheusConfiguration()) {
+  init(_ config: OrpheusConfig = OrpheusConfig()) {
     self.config = config
 
     _embedTokens.wrappedValue = Embedding(
@@ -219,9 +203,9 @@ class OrpheusLMHeadModel: Module {
   @ModuleInfo(key: "model") var model: OrpheusModel
   @ModuleInfo(key: "lm_head") var lmHead: Linear?
 
-  let config: OrpheusConfiguration
+  let config: OrpheusConfig
 
-  init(_ config: OrpheusConfiguration = OrpheusConfiguration()) {
+  init(_ config: OrpheusConfig = OrpheusConfig()) {
     self.config = config
     _model.wrappedValue = OrpheusModel(config)
 

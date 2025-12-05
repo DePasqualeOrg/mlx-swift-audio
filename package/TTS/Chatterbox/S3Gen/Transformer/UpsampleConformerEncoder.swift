@@ -13,14 +13,14 @@ import MLXNN
 // MARK: - Upsample1D
 
 /// A 1D upsampling layer with an optional convolution
-public class Upsample1D: Module {
+class Upsample1D: Module {
   let channels: Int
   let outChannels: Int
   let stride: Int
 
   @ModuleInfo(key: "conv") var conv: Conv1d
 
-  public init(channels: Int, outChannels: Int, stride: Int = 2) {
+  init(channels: Int, outChannels: Int, stride: Int = 2) {
     self.channels = channels
     self.outChannels = outChannels
     self.stride = stride
@@ -35,7 +35,7 @@ public class Upsample1D: Module {
     )
   }
 
-  public func callAsFunction(_ inputs: MLXArray, inputLengths: MLXArray) -> (MLXArray, MLXArray) {
+  func callAsFunction(_ inputs: MLXArray, inputLengths: MLXArray) -> (MLXArray, MLXArray) {
     // inputs: (B, C, T) - PyTorch format
     let B = inputs.shape[0]
     let C = inputs.shape[1]
@@ -63,14 +63,14 @@ public class Upsample1D: Module {
 // MARK: - PreLookaheadLayer
 
 /// Pre-lookahead layer for causal processing
-public class PreLookaheadLayer: Module {
+class PreLookaheadLayer: Module {
   let channels: Int
   let preLookaheadLen: Int
 
   @ModuleInfo(key: "conv1") var conv1: Conv1d
   @ModuleInfo(key: "conv2") var conv2: Conv1d
 
-  public init(channels: Int, preLookaheadLen: Int = 1) {
+  init(channels: Int, preLookaheadLen: Int = 1) {
     self.channels = channels
     self.preLookaheadLen = preLookaheadLen
 
@@ -90,7 +90,7 @@ public class PreLookaheadLayer: Module {
     )
   }
 
-  public func callAsFunction(_ inputs: MLXArray) -> MLXArray {
+  func callAsFunction(_ inputs: MLXArray) -> MLXArray {
     // inputs: (B, T, C) - MLX format
     var outputs = inputs
 
@@ -198,7 +198,7 @@ func addOptionalChunkMask(
 // MARK: - UpsampleConformerEncoder
 
 /// Conformer encoder with upsampling for speech synthesis
-public class UpsampleConformerEncoder: Module {
+class UpsampleConformerEncoder: Module {
   let _outputSize: Int
   let normalizeBefore: Bool
   let staticChunkSize: Int
@@ -213,7 +213,7 @@ public class UpsampleConformerEncoder: Module {
   @ModuleInfo(key: "up_embed") var upEmbed: LinearNoSubsampling
   @ModuleInfo(key: "up_encoders") var upEncoders: [ConformerEncoderLayer]
 
-  public init(
+  init(
     inputSize: Int = 512,
     outputSize: Int = 512,
     attentionHeads: Int = 8,
@@ -388,12 +388,12 @@ public class UpsampleConformerEncoder: Module {
     _upEncoders.wrappedValue = upEncoderLayers
   }
 
-  public func outputSize() -> Int {
+  func outputSize() -> Int {
     _outputSize
   }
 
   /// Embed positions in tensor
-  public func callAsFunction(
+  func callAsFunction(
     _ xs: MLXArray,
     xsLens: MLXArray,
     decodingChunkSize: Int = 0,

@@ -4,9 +4,12 @@ import MLXLLM
 import MLXLMCommon
 import MLXNN
 
-private class Llama3ScaledRoPE: Module {
-  // Config
-  let dims: Int // Dh (must be even)
+// MARK: - Marvis-specific Llama3 Scaled RoPE
+
+/// Llama3-style RoPE with manual cos/sin cache, specifically tuned for Marvis.
+/// This implementation uses a different frequency convention than the standard MLXFast.RoPE.
+private class Llama3ScaledRoPE {
+  let dims: Int
   var maxSeqLen: Int
   let base: Float
   let scaleFactor: Float
@@ -14,8 +17,8 @@ private class Llama3ScaledRoPE: Module {
   let highFreqFactor: Float
   let oldContextLen: Float
 
-  private var theta: MLXArray? // [Dh/2] (float32)
-  private var cache: MLXArray? // [L, Dh/2, 2] with cos/sin
+  private var theta: MLXArray?
+  private var cache: MLXArray?
   private var isCacheBuilt = false
 
   init(
@@ -35,12 +38,11 @@ private class Llama3ScaledRoPE: Module {
     self.lowFreqFactor = lowFreqFactor
     self.highFreqFactor = highFreqFactor
     self.oldContextLen = oldContextLen
-    super.init()
 
     ropeInit()
   }
 
-  convenience init(dims: Int, config: MarvisLlamaConfig) {
+  convenience init(dims: Int, config: MarvisBackboneConfig) {
     let base = config.ropeTheta
     let rs = config.ropeScaling
     func num(_ k: String, _ d: Float) -> Float {
@@ -49,9 +51,7 @@ private class Llama3ScaledRoPE: Module {
         case let .float(x): return Float(x)
         case let .int(x): return Float(x)
         case let .string(s): return Float(s) ?? d
-        default:
-          assertionFailure("unexpected value for \(k): \(v)")
-          return d
+        default: return d
       }
     }
     self.init(
@@ -66,15 +66,17 @@ private class Llama3ScaledRoPE: Module {
   }
 
   func ropeInit() {
-    let indices = MLXArray(stride(from: 0, to: dims, by: 2)).asType(.float32) // [Dh/2]
+    let indices = MLXArray(stride(from: 0, to: dims, by: 2)).asType(.float32)
     let exponents = indices / MLXArray(Float(dims))
-    let freqs = MLX.pow(MLXArray(base), -exponents) // base ** (-i/d)
+    let freqs = MLX.pow(MLXArray(base), -exponents)
 
-    let th = applyScaling(freqs: freqs,
-                          scaleFactor: scaleFactor,
-                          lowFreqFactor: lowFreqFactor,
-                          highFreqFactor: highFreqFactor,
-                          oldContextLen: oldContextLen)
+    let th = applyScaling(
+      freqs: freqs,
+      scaleFactor: scaleFactor,
+      lowFreqFactor: lowFreqFactor,
+      highFreqFactor: highFreqFactor,
+      oldContextLen: oldContextLen,
+    )
     theta = th
     buildRoPECache(maxSeqLen)
     isCacheBuilt = true
@@ -82,11 +84,11 @@ private class Llama3ScaledRoPE: Module {
 
   private func buildRoPECache(_ L: Int) {
     guard let th = theta else { return }
-    let seqIdx = MLXArray(stride(from: 0, to: L, by: 1)).asType(th.dtype) // [L]
+    let seqIdx = MLXArray(stride(from: 0, to: L, by: 1)).asType(th.dtype)
     let idxTheta = (seqIdx.reshaped([L, 1]) * th.reshaped([1, th.shape[0]])).asType(.float32)
     let cosT = cos(idxTheta)
     let sinT = sin(idxTheta)
-    cache = stacked([cosT, sinT], axis: -1) // [L, Dh/2, 2]
+    cache = stacked([cosT, sinT], axis: -1)
     maxSeqLen = L
   }
 
@@ -97,7 +99,6 @@ private class Llama3ScaledRoPE: Module {
     highFreqFactor: Float,
     oldContextLen: Float,
   ) -> MLXArray {
-    // wavelen = 2π / freq
     let twoPi = MLXArray(2.0 * Float.pi)
     let wavelens = twoPi / freqs
 
@@ -118,16 +119,16 @@ private class Llama3ScaledRoPE: Module {
     return out.asType(freqs.dtype)
   }
 
-  func callAsFunction(_ x: MLXArray, offset: Int? = nil) -> MLXArray {
+  func callAsFunction(_ x: MLXArray, offset: Int = 0) -> MLXArray {
     precondition(isCacheBuilt, "RoPE cache is not built. Call ropeInit() first.")
     guard var cache else { return x }
 
     let seqAxis = (x.ndim == 4) ? 2 : 1
     let seqLen = x.shape[seqAxis]
-    let need = (offset ?? 0) + seqLen
+    let need = offset + seqLen
     if need > cache.shape[0] { buildRoPECache(need); cache = self.cache! }
 
-    let start = max(offset ?? 0, 0)
+    let start = max(offset, 0)
     let head = split(cache, indices: [start], axis: 0)[1]
     let seg = split(head, indices: [seqLen], axis: 0)[0]
 
@@ -139,11 +140,11 @@ private class Llama3ScaledRoPE: Module {
     ropeShape[seqAxis] = seqLen
     ropeShape[xShaped.ndim - 2] = pairs
     ropeShape[xShaped.ndim - 1] = 2
-    let rope = seg.reshaped(ropeShape) // [..., T, pairs, 2] with 1s elsewhere
+    let rope = seg.reshaped(ropeShape)
 
     func splitLast2(_ a: MLXArray) -> (MLXArray, MLXArray) {
       let p = split(a, indices: [1], axis: a.ndim - 1)
-      return (p[0], p[1]) // (..., 1)
+      return (p[0], p[1])
     }
     let (x0, x1) = splitLast2(xShaped)
     let (c, s) = splitLast2(rope)
@@ -156,18 +157,20 @@ private class Llama3ScaledRoPE: Module {
   }
 }
 
-private class LlamaAttention: Module {
-  let args: MarvisLlamaConfig
+// MARK: - Attention
+
+private class MarvisAttention: Module {
+  let args: MarvisBackboneConfig
   let scale: Float
 
-  @ModuleInfo(key: "q_proj") var q_proj: Linear
-  @ModuleInfo(key: "k_proj") var k_proj: Linear
-  @ModuleInfo(key: "v_proj") var v_proj: Linear
-  @ModuleInfo(key: "o_proj") var o_proj: Linear
+  @ModuleInfo(key: "q_proj") var qProj: Linear
+  @ModuleInfo(key: "k_proj") var kProj: Linear
+  @ModuleInfo(key: "v_proj") var vProj: Linear
+  @ModuleInfo(key: "o_proj") var oProj: Linear
 
   let rope: Llama3ScaledRoPE
 
-  init(_ args: MarvisLlamaConfig) {
+  init(_ args: MarvisBackboneConfig) {
     self.args = args
 
     let dim = args.hiddenSize
@@ -177,37 +180,33 @@ private class LlamaAttention: Module {
     let headDim = args.resolvedHeadDimensions
     scale = pow(Float(headDim), -0.5)
 
-    _q_proj.wrappedValue = Linear(dim, heads * headDim, bias: args.attentionBias)
-    _k_proj.wrappedValue = Linear(dim, kvHeads * headDim, bias: args.attentionBias)
-    _v_proj.wrappedValue = Linear(dim, kvHeads * headDim, bias: args.attentionBias)
-    _o_proj.wrappedValue = Linear(heads * headDim, dim, bias: args.attentionBias)
+    _qProj.wrappedValue = Linear(dim, heads * headDim, bias: args.attentionBias)
+    _kProj.wrappedValue = Linear(dim, kvHeads * headDim, bias: args.attentionBias)
+    _vProj.wrappedValue = Linear(dim, kvHeads * headDim, bias: args.attentionBias)
+    _oProj.wrappedValue = Linear(heads * headDim, dim, bias: args.attentionBias)
 
     rope = Llama3ScaledRoPE(dims: headDim, config: args)
   }
 
   func callAsFunction(
-    _ x: MLXArray, mask: MLXFast.ScaledDotProductAttentionMaskMode, cache: TTSKVCache?,
+    _ x: MLXArray, mask: MLXFast.ScaledDotProductAttentionMaskMode, cache: KVCache?,
   ) -> MLXArray {
     let (B, L) = (x.dim(0), x.dim(1))
 
-    var queries = q_proj(x)
-    var keys = k_proj(x)
-    var values = v_proj(x)
+    var queries = qProj(x)
+    var keys = kProj(x)
+    var values = vProj(x)
 
     queries = queries.reshaped(B, L, args.attentionHeads, -1).transposed(0, 2, 1, 3)
     keys = keys.reshaped(B, L, args.kvHeads, -1).transposed(0, 2, 1, 3)
     values = values.reshaped(B, L, args.kvHeads, -1).transposed(0, 2, 1, 3)
 
-    if let cache {
-      queries = rope(queries, offset: cache.offset)
-      keys = rope(keys, offset: cache.offset)
-    } else {
-      queries = rope(queries)
-      keys = rope(keys)
-    }
+    let offset = cache?.offset ?? 0
+    queries = rope(queries, offset: offset)
+    keys = rope(keys, offset: offset)
 
     if let cache {
-      let (updatedKeys, updatedValues) = cache.updateAndFetch(keys, values)
+      let (updatedKeys, updatedValues) = cache.update(keys: keys, values: values)
       let attnResult = MLXFast.scaledDotProductAttention(
         queries: queries,
         keys: updatedKeys,
@@ -217,7 +216,7 @@ private class LlamaAttention: Module {
       )
       let transposed = attnResult.transposed(0, 2, 1, 3)
       let output = transposed.reshaped([B, L, args.attentionHeads * args.resolvedHeadDimensions])
-      return o_proj(output)
+      return oProj(output)
     } else {
       let attnResult = MLXFast.scaledDotProductAttention(
         queries: queries,
@@ -228,38 +227,27 @@ private class LlamaAttention: Module {
       )
       let transposed = attnResult.transposed(0, 2, 1, 3)
       let output = transposed.reshaped([B, L, args.attentionHeads * args.resolvedHeadDimensions])
-      return o_proj(output)
+      return oProj(output)
     }
   }
 }
 
-private class MLP: Module, UnaryLayer {
-  @ModuleInfo(key: "gate_proj") var gate: Linear
-  @ModuleInfo(key: "down_proj") var down: Linear
-  @ModuleInfo(key: "up_proj") var up: Linear
+// MARK: - Transformer Block
 
-  init(_ args: MarvisLlamaConfig) {
-    _gate.wrappedValue = Linear(args.hiddenSize, args.intermediateSize, bias: args.mlpBias)
-    _down.wrappedValue = Linear(args.intermediateSize, args.hiddenSize, bias: args.mlpBias)
-    _up.wrappedValue = Linear(args.hiddenSize, args.intermediateSize, bias: args.mlpBias)
-  }
-
-  func callAsFunction(_ x: MLXArray) -> MLXArray {
-    let activation = silu(gate(x))
-    return down(activation * up(x))
-  }
-}
-
-private class TransformerBlock: Module {
-  @ModuleInfo(key: "self_attn") var attention: LlamaAttention
-  @ModuleInfo(key: "mlp") var mlp: MLP
+private class MarvisTransformerBlock: Module {
+  @ModuleInfo(key: "self_attn") var attention: MarvisAttention
+  @ModuleInfo(key: "mlp") var mlp: SwiGLUMLP
 
   @ModuleInfo(key: "input_layernorm") var inputLayerNorm: RMSNorm
   @ModuleInfo(key: "post_attention_layernorm") var postAttentionLayerNorm: RMSNorm
 
-  init(_ args: MarvisLlamaConfig) {
-    _attention.wrappedValue = LlamaAttention(args)
-    _mlp.wrappedValue = MLP(args)
+  init(_ args: MarvisBackboneConfig) {
+    _attention.wrappedValue = MarvisAttention(args)
+    _mlp.wrappedValue = SwiGLUMLP(
+      hiddenSize: args.hiddenSize,
+      intermediateSize: args.intermediateSize,
+      bias: args.mlpBias,
+    )
     _inputLayerNorm.wrappedValue = RMSNorm(
       dimensions: args.hiddenSize, eps: args.rmsNormEps,
     )
@@ -269,7 +257,7 @@ private class TransformerBlock: Module {
   }
 
   func callAsFunction(
-    _ x: MLXArray, mask: MLXFast.ScaledDotProductAttentionMaskMode, cache: TTSKVCache?,
+    _ x: MLXArray, mask: MLXFast.ScaledDotProductAttentionMaskMode, cache: KVCache?,
   ) -> MLXArray {
     var r = attention(inputLayerNorm(x), mask: mask, cache: cache)
     let h = x + r
@@ -279,22 +267,24 @@ private class TransformerBlock: Module {
   }
 }
 
-class MarvisLlamaBackbone: Module, LLMModel, KVCacheDimensionProvider {
+// MARK: - Backbone
+
+class MarvisBackbone: Module, LLMModel, KVCacheDimensionProvider {
   let vocabularySize: Int
   let kvHeads: [Int]
 
-  fileprivate let layers: [TransformerBlock]
+  fileprivate let layers: [MarvisTransformerBlock]
   let norm: RMSNorm
 
-  init(_ args: MarvisLlamaConfig) {
+  init(_ args: MarvisBackboneConfig) {
     precondition(args.vocabularySize > 0)
     vocabularySize = args.vocabularySize
     kvHeads = (0 ..< args.hiddenLayers).map { _ in args.kvHeads }
-    layers = (0 ..< args.hiddenLayers).map { _ in TransformerBlock(args) }
+    layers = (0 ..< args.hiddenLayers).map { _ in MarvisTransformerBlock(args) }
     norm = RMSNorm(dimensions: args.hiddenSize, eps: args.rmsNormEps)
   }
 
-  func callAsFunction(_ inputs: MLXArray, cache: [TTSKVCache]?) -> MLXArray {
+  func callAsFunction(_ inputs: MLXArray, cache: [KVCache]?) -> MLXArray {
     var h = inputs
 
     let mask: MLXFast.ScaledDotProductAttentionMaskMode = .causal
@@ -313,7 +303,9 @@ class MarvisLlamaBackbone: Module, LLMModel, KVCacheDimensionProvider {
   }
 }
 
-struct MarvisLlamaConfig: Codable, Sendable {
+// MARK: - Configuration
+
+struct MarvisBackboneConfig: Codable, Sendable {
   var hiddenSize: Int
   var hiddenLayers: Int
   var intermediateSize: Int
@@ -444,7 +436,7 @@ struct MarvisLlamaConfig: Codable, Sendable {
 
 // MARK: - LoRA
 
-extension MarvisLlamaBackbone: LoRAModel {
+extension MarvisBackbone: LoRAModel {
   var loraLayers: [Module] {
     layers
   }

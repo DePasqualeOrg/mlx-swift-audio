@@ -8,13 +8,13 @@ import MLXNN
 
 class LayerNormInference: Module {
   let eps: Float
-  let weight: MLXArray?
-  let bias: MLXArray?
+  @ModuleInfo(key: "gamma") var weight: MLXArray?
+  @ModuleInfo(key: "beta") var bias: MLXArray?
 
-  init(weight: MLXArray, bias: MLXArray?, eps: Float = 1e-5) {
-    self.weight = weight
-    self.bias = bias
+  init(dims: Int = 0, eps: Float = 1e-5) {
     self.eps = eps
+    _weight.wrappedValue = dims > 0 ? MLXArray.ones([dims]) : nil
+    _bias.wrappedValue = dims > 0 ? MLXArray.zeros([dims]) : nil
   }
 
   open func callAsFunction(_ x: MLXArray) -> MLXArray {

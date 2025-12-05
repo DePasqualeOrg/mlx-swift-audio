@@ -5,17 +5,19 @@ import Foundation
 import MLX
 import MLXNN
 
-class CustomAlbert {
-  let config: AlbertModelArgs
-  let embeddings: AlbertEmbeddings
-  let encoder: AlbertEncoder
-  let pooler: Linear
+class CustomAlbert: Module {
+  let config: AlbertConfig
 
-  init(weights: [String: MLXArray], config: AlbertModelArgs) {
+  @ModuleInfo var embeddings: AlbertEmbeddings
+  @ModuleInfo var encoder: AlbertEncoder
+  @ModuleInfo var pooler: Linear
+
+  init(config: AlbertConfig) {
     self.config = config
-    embeddings = AlbertEmbeddings(weights: weights, config: config)
-    encoder = AlbertEncoder(weights: weights, config: config)
-    pooler = Linear(weight: weights["bert.pooler.weight"]!, bias: weights["bert.pooler.bias"]!)
+
+    _embeddings.wrappedValue = AlbertEmbeddings(config: config)
+    _encoder.wrappedValue = AlbertEncoder(config: config)
+    _pooler.wrappedValue = Linear(config.hiddenSize, config.hiddenSize)
   }
 
   func callAsFunction(

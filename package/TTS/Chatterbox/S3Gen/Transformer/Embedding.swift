@@ -15,7 +15,7 @@ import MLXNN
 /// Sinusoidal positional encoding
 /// PE(pos, 2i)   = sin(pos/(10000^(2i/d_model)))
 /// PE(pos, 2i+1) = cos(pos/(10000^(2i/d_model)))
-public class PositionalEncoding: Module {
+class PositionalEncoding: Module {
   let dModel: Int
   let xscale: Float
   let dropoutRate: Float
@@ -23,7 +23,7 @@ public class PositionalEncoding: Module {
   /// Positional encoding buffer - underscore prefix excludes from parameter validation
   var _pe: MLXArray
 
-  public init(dModel: Int, dropoutRate: Float, maxLen: Int = 5000) {
+  init(dModel: Int, dropoutRate: Float, maxLen: Int = 5000) {
     self.dModel = dModel
     xscale = sqrt(Float(dModel))
     self.dropoutRate = dropoutRate
@@ -52,12 +52,12 @@ public class PositionalEncoding: Module {
     return peArray.expandedDimensions(axis: 0) // (1, max_len, d_model)
   }
 
-  public func positionEncoding(offset: Int, size: Int) -> MLXArray {
+  func positionEncoding(offset: Int, size: Int) -> MLXArray {
     precondition(offset + size <= maxLen, "Position encoding out of range")
     return _pe[0..., offset ..< offset + size, 0...]
   }
 
-  public func callAsFunction(_ x: MLXArray, offset: Int = 0) -> (MLXArray, MLXArray) {
+  func callAsFunction(_ x: MLXArray, offset: Int = 0) -> (MLXArray, MLXArray) {
     let posEmb = positionEncoding(offset: offset, size: x.shape[1])
     var xOut = x * xscale + posEmb
 
@@ -72,12 +72,12 @@ public class PositionalEncoding: Module {
 /// Relative positional encoding module
 /// Unlike PositionalEncoding, this does NOT add pos_emb to input.
 /// The pos_emb is returned separately for use in relative attention.
-public class RelPositionalEncoding: PositionalEncoding {
-  override public init(dModel: Int, dropoutRate: Float, maxLen: Int = 5000) {
+class RelPositionalEncoding: PositionalEncoding {
+  override init(dModel: Int, dropoutRate: Float, maxLen: Int = 5000) {
     super.init(dModel: dModel, dropoutRate: dropoutRate, maxLen: maxLen)
   }
 
-  override public func callAsFunction(_ x: MLXArray, offset: Int = 0) -> (MLXArray, MLXArray) {
+  override func callAsFunction(_ x: MLXArray, offset: Int = 0) -> (MLXArray, MLXArray) {
     let xScaled = x * xscale
     let posEmb = positionEncoding(offset: offset, size: x.shape[1])
     return (xScaled, posEmb)
@@ -89,7 +89,7 @@ public class RelPositionalEncoding: PositionalEncoding {
 /// Relative positional encoding module (ESPnet implementation)
 /// This version computes both positive and negative position encodings
 /// for bidirectional relative attention.
-public class EspnetRelPositionalEncoding: Module {
+class EspnetRelPositionalEncoding: Module {
   let dModel: Int
   let xscale: Float
   let dropoutRate: Float
@@ -97,7 +97,7 @@ public class EspnetRelPositionalEncoding: Module {
   /// Positional encoding buffer - underscore prefix excludes from parameter validation
   var _pe: MLXArray?
 
-  public init(dModel: Int, dropoutRate: Float, maxLen: Int = 5000) {
+  init(dModel: Int, dropoutRate: Float, maxLen: Int = 5000) {
     self.dModel = dModel
     xscale = sqrt(Float(dModel))
     self.dropoutRate = dropoutRate
@@ -141,7 +141,7 @@ public class EspnetRelPositionalEncoding: Module {
     maxLen = size
   }
 
-  public func positionEncoding(size: Int, offset _: Int = 0) -> MLXArray {
+  func positionEncoding(size: Int, offset _: Int = 0) -> MLXArray {
     guard let pe = _pe else {
       fatalError("PE not initialized")
     }
@@ -151,7 +151,7 @@ public class EspnetRelPositionalEncoding: Module {
     return pe[0..., start ..< end, 0...]
   }
 
-  public func callAsFunction(_ x: MLXArray, offset: Int = 0) -> (MLXArray, MLXArray) {
+  func callAsFunction(_ x: MLXArray, offset: Int = 0) -> (MLXArray, MLXArray) {
     extendPE(size: x.shape[1])
     let xScaled = x * xscale
     let posEmb = positionEncoding(size: x.shape[1], offset: offset)
@@ -162,20 +162,20 @@ public class EspnetRelPositionalEncoding: Module {
 // MARK: - NoPositionalEncoding
 
 /// No positional encoding - returns zeros
-public class NoPositionalEncoding: Module {
+class NoPositionalEncoding: Module {
   let dModel: Int
   let dropoutRate: Float
 
-  public init(dModel: Int, dropoutRate: Float) {
+  init(dModel: Int, dropoutRate: Float) {
     self.dModel = dModel
     self.dropoutRate = dropoutRate
   }
 
-  public func positionEncoding(offset _: Int, size: Int) -> MLXArray {
+  func positionEncoding(offset _: Int, size: Int) -> MLXArray {
     MLXArray.zeros([1, size, dModel])
   }
 
-  public func callAsFunction(_ x: MLXArray, offset _: Int = 0) -> (MLXArray, MLXArray) {
+  func callAsFunction(_ x: MLXArray, offset _: Int = 0) -> (MLXArray, MLXArray) {
     let posEmb = MLXArray.zeros([1, x.shape[1], dModel])
     return (x, posEmb)
   }

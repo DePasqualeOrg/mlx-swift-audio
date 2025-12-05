@@ -33,7 +33,7 @@ public final class OuteTTSEngine: TTSEngine {
 
   // MARK: - Private Properties
 
-  @ObservationIgnored private var outeTTS: OuteTTSSession?
+  @ObservationIgnored private var outeTTS: OuteTTS?
   @ObservationIgnored private let audioPlayer = AudioSamplePlayer(sampleRate: TTSProvider.outetts.sampleRate)
   @ObservationIgnored private var generationTask: Task<Void, Never>?
 
@@ -60,7 +60,7 @@ public final class OuteTTSEngine: TTSEngine {
     Log.model.info("Loading OuteTTS model...")
 
     do {
-      let engine = OuteTTSSession()
+      let engine = OuteTTS()
       try await engine.load(progressHandler: progressHandler ?? { _ in })
       outeTTS = engine
 

@@ -5,46 +5,29 @@ import Foundation
 import MLX
 import MLXNN
 
-class AlbertSelfAttention {
+class AlbertSelfAttention: Module {
   let numAttentionHeads: Int
   let attentionHeadSize: Int
   let allHeadSize: Int
 
-  let query: Linear
-  let key: Linear
-  let value: Linear
-  let dense: Linear
-  let layerNorm: LayerNorm
+  @ModuleInfo var query: Linear
+  @ModuleInfo var key: Linear
+  @ModuleInfo var value: Linear
+  @ModuleInfo var dense: Linear
+  @ModuleInfo(key: "LayerNorm") var layerNorm: LayerNorm
   let attentionDropout: Dropout
 
-  init(weights: [String: MLXArray], config: AlbertModelArgs, layerNum: Int, innerGroupNum: Int) {
+  init(config: AlbertConfig) {
     numAttentionHeads = config.numAttentionHeads
     attentionHeadSize = config.hiddenSize / config.numAttentionHeads
     allHeadSize = numAttentionHeads * attentionHeadSize
     attentionDropout = Dropout(p: config.attentionProbsDropoutProb)
 
-    query = Linear(weight: weights["bert.encoder.albert_layer_groups.\(layerNum).albert_layers.\(innerGroupNum).attention.query.weight"]!,
-                   bias: weights["bert.encoder.albert_layer_groups.\(layerNum).albert_layers.\(innerGroupNum).attention.query.bias"]!)
-    key = Linear(weight: weights["bert.encoder.albert_layer_groups.\(layerNum).albert_layers.\(innerGroupNum).attention.key.weight"]!,
-                 bias: weights["bert.encoder.albert_layer_groups.\(layerNum).albert_layers.\(innerGroupNum).attention.key.bias"]!)
-    value = Linear(weight: weights["bert.encoder.albert_layer_groups.\(layerNum).albert_layers.\(innerGroupNum).attention.value.weight"]!,
-                   bias: weights["bert.encoder.albert_layer_groups.\(layerNum).albert_layers.\(innerGroupNum).attention.value.bias"])
-    dense = Linear(weight: weights["bert.encoder.albert_layer_groups.\(layerNum).albert_layers.\(innerGroupNum).attention.dense.weight"]!,
-                   bias: weights["bert.encoder.albert_layer_groups.\(layerNum).albert_layers.\(innerGroupNum).attention.dense.bias"]!)
-
-    layerNorm = LayerNorm(dimensions: config.hiddenSize, eps: config.layerNormEps)
-
-    let layerNormWeights = weights["bert.encoder.albert_layer_groups.\(layerNum).albert_layers.\(innerGroupNum).attention.LayerNorm.weight"]!
-    let layerNormBiases = weights["bert.encoder.albert_layer_groups.\(layerNum).albert_layers.\(innerGroupNum).attention.LayerNorm.bias"]!
-
-    guard layerNormWeights.count == config.hiddenSize, layerNormBiases.count == config.hiddenSize else {
-      fatalError("Wrong shape for AlbertSelfAttention LayerNorm bias or weights!")
-    }
-
-    for i in 0 ..< layerNormBiases.shape[0] {
-      layerNorm.bias![i] = layerNormBiases[i]
-      layerNorm.weight![i] = layerNormWeights[i]
-    }
+    _query.wrappedValue = Linear(config.hiddenSize, allHeadSize)
+    _key.wrappedValue = Linear(config.hiddenSize, allHeadSize)
+    _value.wrappedValue = Linear(config.hiddenSize, allHeadSize)
+    _dense.wrappedValue = Linear(allHeadSize, config.hiddenSize)
+    _layerNorm.wrappedValue = LayerNorm(dimensions: config.hiddenSize, eps: config.layerNormEps)
   }
 
   func transposeForScores(_ x: MLXArray) -> MLXArray {

@@ -2,77 +2,80 @@
 //  ResidualUnit.swift
 //  MLXAudio
 //
-//  Created by Ben Harraway on 14/05/2025.
+//  ResidualUnit for SNAC decoder - residual block with snake activations
 //
 import Foundation
 import MLX
 import MLXNN
 
-struct ResidualUnit {
-  let snake1Alpha: MLXArray
-  let conv1: ConvWeighted
-  let snake2Alpha: MLXArray
-  let conv2: ConvWeighted
+/// Snake activation wrapper for SNAC decoder
+/// Contains the learnable alpha parameter
+class SNACSnake: Module {
+  @ModuleInfo var alpha: MLXArray
 
-  // We need to pass the specific weights required by this unit
-  init(dim _: Int, dilation: Int, kernelSize: Int, groups: Int, weights: [String: MLXArray], basePath: String) {
-    // Load weights for this specific ResidualUnit based on the basePath
-    // Example basePath: "decoder.model.layers.1.block.layers.3.block.layers"
-    snake1Alpha = weights["\(basePath).0.alpha"]!
-    let conv1WeightG = weights["\(basePath).1.weight_g"]!
-    let conv1WeightV = weights["\(basePath).1.weight_v"]!
-    let conv1Bias = weights["\(basePath).1.bias"]
+  init(channels: Int) {
+    _alpha.wrappedValue = MLX.ones([1, channels, 1])
+  }
+
+  func callAsFunction(_ x: MLXArray) -> MLXArray {
+    SNACDecoder.snake(x, alpha: alpha)
+  }
+}
+
+/// ResidualUnit for SNAC decoder - residual block with snake activations
+/// Clean structure with semantic property names
+class SNACResidualUnit: Module {
+  @ModuleInfo var snake1: SNACSnake
+  @ModuleInfo var conv1: WNConv1d
+  @ModuleInfo var snake2: SNACSnake
+  @ModuleInfo var conv2: WNConv1d
+
+  init(dim: Int, dilation: Int, kernelSize: Int, groups: Int) {
     let pad1 = ((kernelSize - 1) * dilation) / 2
-    conv1 = ConvWeighted(
-      weightG: conv1WeightG,
-      weightV: conv1WeightV,
-      bias: conv1Bias,
+
+    _snake1.wrappedValue = SNACSnake(channels: dim)
+    _conv1.wrappedValue = WNConv1d(
+      inChannels: dim,
+      outChannels: dim,
+      kernelSize: kernelSize,
       padding: pad1,
       dilation: dilation,
       groups: groups,
+      bias: true,
     )
-
-    snake2Alpha = weights["\(basePath).2.alpha"]!
-    let conv2WeightG = weights["\(basePath).3.weight_g"]!
-    let conv2WeightV = weights["\(basePath).3.weight_v"]!
-    let conv2Bias = weights["\(basePath).3.bias"]
-    // Second conv has kernel_size=1, padding=0, dilation=1, groups=1 (implicitly)
-    conv2 = ConvWeighted(
-      weightG: conv2WeightG,
-      weightV: conv2WeightV,
-      bias: conv2Bias,
-      padding: 0, // Kernel size 1 needs 0 padding
+    _snake2.wrappedValue = SNACSnake(channels: dim)
+    _conv2.wrappedValue = WNConv1d(
+      inChannels: dim,
+      outChannels: dim,
+      kernelSize: 1,
+      padding: 0,
       dilation: 1,
-      groups: 1, // Typically 1 for the final 1x1 conv
+      groups: 1,
+      bias: true,
     )
   }
 
   func callAsFunction(_ x: MLXArray) -> MLXArray {
     var residual = x
     var y = x
-    // Ensure [B, C, T] for both
-    if y.shape[1] != residual.shape[1], y.shape[2] == residual.shape[1] {
+
+    // Ensure input is [B, C, T] format
+    if y.shape[1] != snake1.alpha.shape[1], y.shape[2] == snake1.alpha.shape[1] {
       y = y.transposed(axes: [0, 2, 1])
     }
-
-    if residual.shape[1] != y.shape[1], residual.shape[2] == y.shape[1] {
+    if residual.shape[1] != snake1.alpha.shape[1], residual.shape[2] == snake1.alpha.shape[1] {
       residual = residual.transposed(axes: [0, 2, 1])
     }
 
     // Apply the sequence: Snake -> Conv1 -> Snake -> Conv2
-    if y.shape[1] != snake1Alpha.shape[1] {
-      y = y.transposed(axes: [0, 2, 1])
-    }
-    y = SNACDecoder.snake(y, alpha: snake1Alpha) // Use static call
+    // snake outputs [B, T, C], need to transpose back to [B, C, T] for conv
+    y = snake1(y)
+    y = y.transposed(axes: [0, 2, 1])
+    y = conv1(y)
 
-    y = conv1(y, conv: MLX.conv1d)
-
-    if y.shape[1] != snake2Alpha.shape[1] {
-      y = y.transposed(axes: [0, 2, 1])
-    }
-    y = SNACDecoder.snake(y, alpha: snake2Alpha) // Use static call
-
-    y = conv2(y, conv: MLX.conv1d)
+    y = snake2(y)
+    y = y.transposed(axes: [0, 2, 1])
+    y = conv2(y)
 
     // Crop residual if needed to match y's time dim
     let tRes = residual.shape[2]

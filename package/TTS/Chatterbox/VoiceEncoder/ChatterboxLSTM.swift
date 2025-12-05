@@ -13,7 +13,7 @@ import MLXNN
 // MARK: - LSTMCell
 
 /// Single LSTM layer cell with MLX weight naming convention
-public class LSTMCell: Module {
+class LSTMCell: Module {
   let hiddenSize: Int
 
   // MLX format weight names
@@ -21,7 +21,7 @@ public class LSTMCell: Module {
   @ParameterInfo(key: "Wh") var Wh: MLXArray // Hidden weights
   @ParameterInfo(key: "bias") var bias: MLXArray // Combined bias
 
-  public init(inputSize: Int, hiddenSize: Int) {
+  init(inputSize: Int, hiddenSize: Int) {
     self.hiddenSize = hiddenSize
 
     // Initialize weights (will be loaded from checkpoint)
@@ -31,7 +31,7 @@ public class LSTMCell: Module {
   }
 
   /// Process a single LSTM layer
-  public func callAsFunction(
+  func callAsFunction(
     x: MLXArray,
     hidden: MLXArray?,
     cell: MLXArray?,
@@ -76,7 +76,7 @@ public class LSTMCell: Module {
 /// - layers.0.Wx, layers.0.Wh, layers.0.bias for layer 0
 /// - layers.1.Wx, layers.1.Wh, layers.1.bias for layer 1
 /// - layers.2.Wx, layers.2.Wh, layers.2.bias for layer 2
-public class ChatterboxLSTM: Module {
+class ChatterboxLSTM: Module {
   let inputSize: Int
   let hiddenSize: Int
   let numLayers: Int
@@ -84,7 +84,7 @@ public class ChatterboxLSTM: Module {
   // Use a layers array with MLX naming convention
   @ModuleInfo(key: "layers") var layers: [LSTMCell]
 
-  public init(inputSize: Int, hiddenSize: Int, numLayers: Int = 3) {
+  init(inputSize: Int, hiddenSize: Int, numLayers: Int = 3) {
     precondition(numLayers == 3, "ChatterboxLSTM currently only supports 3 layers")
 
     self.inputSize = inputSize
@@ -107,7 +107,7 @@ public class ChatterboxLSTM: Module {
   /// - Returns: Tuple of (output, (hN, cN))
   ///            output: (batch, seq_len, hidden_size)
   ///            hN, cN: (num_layers, batch, hidden_size)
-  public func callAsFunction(
+  func callAsFunction(
     _ x: MLXArray,
     hidden: (MLXArray, MLXArray)? = nil,
   ) -> (MLXArray, (MLXArray, MLXArray)) {

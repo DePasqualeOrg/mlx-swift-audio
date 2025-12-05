@@ -31,7 +31,7 @@ func nextPowerOf2(_ n: Int) -> Int {
 }
 
 /// Extract Kaldi-compatible filterbank features
-public func kaldiFbankCAMPPlus(
+func kaldiFbankCAMPPlus(
   audio: MLXArray,
   sampleRate: Int = 16000,
   numMelBins: Int = 80,
@@ -151,7 +151,7 @@ func melFiltersHTK(sampleRate: Int, nFft: Int, nMels: Int, fMin: Float, fMax: Fl
 // MARK: - BasicResBlock
 
 /// Basic residual block for 2D convolution
-public class BasicResBlock: Module {
+class BasicResBlock: Module {
   static let expansion = 1
 
   @ModuleInfo(key: "conv1") var conv1: Conv2d
@@ -160,7 +160,7 @@ public class BasicResBlock: Module {
   @ModuleInfo(key: "bn2") var bn2: BatchNorm
   @ModuleInfo(key: "shortcut") var shortcut: [Module]
 
-  public init(inPlanes: Int, planes: Int, stride: Int = 1) {
+  init(inPlanes: Int, planes: Int, stride: Int = 1) {
     _conv1.wrappedValue = Conv2d(
       inputChannels: inPlanes,
       outputChannels: planes,
@@ -196,7 +196,7 @@ public class BasicResBlock: Module {
     _shortcut.wrappedValue = sc
   }
 
-  public func callAsFunction(_ x: MLXArray) -> MLXArray {
+  func callAsFunction(_ x: MLXArray) -> MLXArray {
     var out = relu(bn1(conv1(x)))
     out = bn2(conv2(out))
 
@@ -217,7 +217,7 @@ public class BasicResBlock: Module {
 // MARK: - FCM
 
 /// Feature Channel Module - processes input features
-public class FCM: Module {
+class FCM: Module {
   var inPlanes: Int
   let outChannels: Int
 
@@ -228,7 +228,7 @@ public class FCM: Module {
   @ModuleInfo(key: "conv2") var conv2: Conv2d
   @ModuleInfo(key: "bn2") var bn2: BatchNorm
 
-  public init(mChannels: Int = 32, featDim: Int = 80) {
+  init(mChannels: Int = 32, featDim: Int = 80) {
     inPlanes = mChannels
 
     _conv1.wrappedValue = Conv2d(
@@ -268,7 +268,7 @@ public class FCM: Module {
     outChannels = mChannels * (featDim / 8)
   }
 
-  public func callAsFunction(_ x: MLXArray) -> MLXArray {
+  func callAsFunction(_ x: MLXArray) -> MLXArray {
     // Input x: (B, F, T) - add channel dimension
     var out = x.expandedDimensions(axis: -1) // (B, F, T, 1) = (B, H, W, C)
     out = relu(bn1(conv1(out)))
@@ -307,8 +307,8 @@ func statisticsPooling(_ x: MLXArray, axis: Int = -1) -> MLXArray {
 }
 
 /// Statistics pooling layer
-public class StatsPool: Module {
-  public func callAsFunction(_ x: MLXArray) -> MLXArray {
+class StatsPool: Module {
+  func callAsFunction(_ x: MLXArray) -> MLXArray {
     statisticsPooling(x)
   }
 }
@@ -316,11 +316,11 @@ public class StatsPool: Module {
 // MARK: - TDNNLayer
 
 /// Time-Delay Neural Network layer
-public class TDNNLayer: Module {
+class TDNNLayer: Module {
   @ModuleInfo(key: "linear") var linear: Conv1d
   @ModuleInfo(key: "nonlinear") var nonlinear: [Module]
 
-  public init(
+  init(
     inChannels: Int,
     outChannels: Int,
     kernelSize: Int,
@@ -348,7 +348,7 @@ public class TDNNLayer: Module {
     _nonlinear.wrappedValue = getNonlinear(configStr: configStr, channels: outChannels)
   }
 
-  public func callAsFunction(_ x: MLXArray) -> MLXArray {
+  func callAsFunction(_ x: MLXArray) -> MLXArray {
     // Input x: (B, C, T) - PyTorch format
     var out = x.swappedAxes(1, 2) // (B, C, T) -> (B, T, C)
     out = linear(out)
@@ -356,7 +356,7 @@ public class TDNNLayer: Module {
     for layer in nonlinear {
       if let bn = layer as? BatchNorm {
         out = bn(out)
-      } else if layer is ReLUWrapper {
+      } else if layer is ReLUActivation {
         out = relu(out)
       }
     }
@@ -365,8 +365,8 @@ public class TDNNLayer: Module {
   }
 }
 
-// Helper class to wrap relu as Module
-class ReLUWrapper: Module {
+/// ReLU activation as a Module for use in heterogeneous layer arrays
+class ReLUActivation: Module {
   func callAsFunction(_ x: MLXArray) -> MLXArray {
     relu(x)
   }
@@ -378,7 +378,7 @@ func getNonlinear(configStr: String, channels: Int) -> [Module] {
   for name in configStr.split(separator: "-") {
     switch String(name) {
       case "relu":
-        layers.append(ReLUWrapper())
+        layers.append(ReLUActivation())
       case "batchnorm", "batchnorm_":
         layers.append(BatchNorm(featureCount: channels))
       default:
@@ -391,12 +391,12 @@ func getNonlinear(configStr: String, channels: Int) -> [Module] {
 // MARK: - CAMLayer
 
 /// Context Attentive Module layer
-public class CAMLayer: Module {
+class CAMLayer: Module {
   @ModuleInfo(key: "linear_local") var linearLocal: Conv1d
   @ModuleInfo(key: "linear1") var linear1: Conv1d
   @ModuleInfo(key: "linear2") var linear2: Conv1d
 
-  public init(
+  init(
     bnChannels: Int,
     outChannels: Int,
     kernelSize: Int,
@@ -466,7 +466,7 @@ public class CAMLayer: Module {
     return seg
   }
 
-  public func callAsFunction(_ x: MLXArray) -> MLXArray {
+  func callAsFunction(_ x: MLXArray) -> MLXArray {
     let y = conv1dPytorchFormat(x, conv: linearLocal)
     var context = MLX.mean(x, axis: -1, keepDims: true) + segPooling(x)
     context = relu(conv1dPytorchFormat(context, conv: linear1))
@@ -478,13 +478,13 @@ public class CAMLayer: Module {
 // MARK: - CAMDenseTDNNLayer
 
 /// CAM Dense TDNN layer
-public class CAMDenseTDNNLayer: Module {
+class CAMDenseTDNNLayer: Module {
   @ModuleInfo(key: "nonlinear1") var nonlinear1: [Module]
   @ModuleInfo(key: "linear1") var linear1: Conv1d
   @ModuleInfo(key: "nonlinear2") var nonlinear2: [Module]
   @ModuleInfo(key: "cam_layer") var camLayer: CAMLayer
 
-  public init(
+  init(
     inChannels: Int,
     outChannels: Int,
     bnChannels: Int,
@@ -511,14 +511,14 @@ public class CAMDenseTDNNLayer: Module {
     )
   }
 
-  public func callAsFunction(_ x: MLXArray) -> MLXArray {
+  func callAsFunction(_ x: MLXArray) -> MLXArray {
     // Input x: (B, C, T) - PyTorch format
     var out = x.swappedAxes(1, 2) // (B, C, T) -> (B, T, C)
 
     for layer in nonlinear1 {
       if let bn = layer as? BatchNorm {
         out = bn(out)
-      } else if layer is ReLUWrapper {
+      } else if layer is ReLUActivation {
         out = relu(out)
       }
     }
@@ -528,7 +528,7 @@ public class CAMDenseTDNNLayer: Module {
     for layer in nonlinear2 {
       if let bn = layer as? BatchNorm {
         out = bn(out)
-      } else if layer is ReLUWrapper {
+      } else if layer is ReLUActivation {
         out = relu(out)
       }
     }
@@ -542,10 +542,10 @@ public class CAMDenseTDNNLayer: Module {
 // MARK: - CAMDenseTDNNBlock
 
 /// CAM Dense TDNN block with multiple layers
-public class CAMDenseTDNNBlock: Module {
+class CAMDenseTDNNBlock: Module {
   @ModuleInfo(key: "layers") var layers: [CAMDenseTDNNLayer]
 
-  public init(
+  init(
     numLayers: Int,
     inChannels: Int,
     outChannels: Int,
@@ -572,7 +572,7 @@ public class CAMDenseTDNNBlock: Module {
     _layers.wrappedValue = layersList
   }
 
-  public func callAsFunction(_ x: MLXArray) -> MLXArray {
+  func callAsFunction(_ x: MLXArray) -> MLXArray {
     var out = x
     for layer in layers {
       out = MLX.concatenated([out, layer(out)], axis: 1)
@@ -584,22 +584,22 @@ public class CAMDenseTDNNBlock: Module {
 // MARK: - TransitLayer
 
 /// Transition layer between dense blocks
-public class TransitLayer: Module {
+class TransitLayer: Module {
   @ModuleInfo(key: "nonlinear") var nonlinear: [Module]
   @ModuleInfo(key: "linear") var linear: Conv1d
 
-  public init(inChannels: Int, outChannels: Int, bias: Bool = true, configStr: String = "batchnorm-relu") {
+  init(inChannels: Int, outChannels: Int, bias: Bool = true, configStr: String = "batchnorm-relu") {
     _nonlinear.wrappedValue = getNonlinear(configStr: configStr, channels: inChannels)
     _linear.wrappedValue = Conv1d(inputChannels: inChannels, outputChannels: outChannels, kernelSize: 1, bias: bias)
   }
 
-  public func callAsFunction(_ x: MLXArray) -> MLXArray {
+  func callAsFunction(_ x: MLXArray) -> MLXArray {
     var out = x.swappedAxes(1, 2) // (B, C, T) -> (B, T, C)
 
     for layer in nonlinear {
       if let bn = layer as? BatchNorm {
         out = bn(out)
-      } else if layer is ReLUWrapper {
+      } else if layer is ReLUActivation {
         out = relu(out)
       }
     }
@@ -613,11 +613,11 @@ public class TransitLayer: Module {
 // MARK: - DenseLayer
 
 /// Dense layer for final embedding
-public class DenseLayer: Module {
+class DenseLayer: Module {
   @ModuleInfo(key: "linear") var linear: Conv1d
   @ModuleInfo(key: "nonlinear") var nonlinear: [BatchNorm]
 
-  public init(inChannels: Int, outChannels: Int, bias: Bool = false, configStr: String = "batchnorm-relu") {
+  init(inChannels: Int, outChannels: Int, bias: Bool = false, configStr: String = "batchnorm-relu") {
     _linear.wrappedValue = Conv1d(inputChannels: inChannels, outputChannels: outChannels, kernelSize: 1, bias: bias)
 
     var batchNorms: [BatchNorm] = []
@@ -632,7 +632,7 @@ public class DenseLayer: Module {
     _nonlinear.wrappedValue = batchNorms
   }
 
-  public func callAsFunction(_ x: MLXArray) -> MLXArray {
+  func callAsFunction(_ x: MLXArray) -> MLXArray {
     var out: MLXArray
 
     if x.ndim == 2 {
@@ -658,7 +658,7 @@ public class DenseLayer: Module {
 // MARK: - CAMPPlus
 
 /// CAM++ speaker embedding model
-public class CAMPPlus: Module {
+class CAMPPlus: Module {
   let outputLevel: String
 
   @ModuleInfo(key: "head") var head: FCM
@@ -669,7 +669,7 @@ public class CAMPPlus: Module {
   @ModuleInfo(key: "stats") var stats: StatsPool
   @ModuleInfo(key: "dense") var dense: DenseLayer
 
-  public init(
+  init(
     featDim: Int = 80,
     embeddingSize: Int = 192,
     growthRate: Int = 32,
@@ -727,7 +727,7 @@ public class CAMPPlus: Module {
     _dense.wrappedValue = DenseLayer(inChannels: channels * 2, outChannels: embeddingSize, configStr: "batchnorm_")
   }
 
-  public func callAsFunction(_ x: MLXArray) -> MLXArray {
+  func callAsFunction(_ x: MLXArray) -> MLXArray {
     var out = x.swappedAxes(1, 2) // (B, T, F) -> (B, F, T)
     out = head(out)
     out = tdnn(out)
@@ -743,7 +743,7 @@ public class CAMPPlus: Module {
     for layer in outNonlinear {
       if let bn = layer as? BatchNorm {
         out = bn(out)
-      } else if layer is ReLUWrapper {
+      } else if layer is ReLUActivation {
         out = relu(out)
       }
     }
@@ -761,7 +761,7 @@ public class CAMPPlus: Module {
   }
 
   /// Inference on raw audio waveform
-  public func inference(_ audio: MLXArray) -> MLXArray {
+  func inference(_ audio: MLXArray) -> MLXArray {
     var audioData = audio
     if audioData.ndim == 1 {
       audioData = audioData.expandedDimensions(axis: 0)

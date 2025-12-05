@@ -14,31 +14,31 @@ import MLXNN
 // MARK: - CFMParams
 
 /// Configuration for Conditional Flow Matching
-public struct CFMParams: Sendable {
-  public var sigmaMin: Float = 1e-06
-  public var solver: String = "euler"
-  public var tScheduler: String = "cosine"
-  public var trainingCfgRate: Float = 0.2
-  public var inferenceCfgRate: Float = 0.7
-  public var regLossType: String = "l1"
+struct CFMParams: Sendable {
+  var sigmaMin: Float = 1e-06
+  var solver: String = "euler"
+  var tScheduler: String = "cosine"
+  var trainingCfgRate: Float = 0.2
+  var inferenceCfgRate: Float = 0.7
+  var regLossType: String = "l1"
 
-  public init() {}
+  init() {}
 }
 
 /// Default CFM parameters for Chatterbox
-public let DefaultCFMParams = CFMParams()
+let DefaultCFMParams = CFMParams()
 
 // MARK: - BASECFM
 
 /// Base Conditional Flow Matching module
-public class BASECFM: Module {
+class BASECFM: Module {
   let nFeats: Int
   let nSpks: Int
   let spkEmbDim: Int
   let solver: String
   let sigmaMin: Float
 
-  public init(nFeats: Int, cfmParams: CFMParams, nSpks: Int = 1, spkEmbDim: Int = 128) {
+  init(nFeats: Int, cfmParams: CFMParams, nSpks: Int = 1, spkEmbDim: Int = 128) {
     self.nFeats = nFeats
     self.nSpks = nSpks
     self.spkEmbDim = spkEmbDim
@@ -47,7 +47,7 @@ public class BASECFM: Module {
   }
 
   /// Forward diffusion
-  public func callAsFunction(
+  func callAsFunction(
     mu: MLXArray,
     mask: MLXArray,
     nTimesteps: Int,
@@ -62,7 +62,7 @@ public class BASECFM: Module {
   }
 
   /// Fixed Euler solver for ODEs
-  public func solveEuler(
+  func solveEuler(
     x: MLXArray,
     tSpan: MLXArray,
     mu: MLXArray,
@@ -96,14 +96,14 @@ public class BASECFM: Module {
 // MARK: - ConditionalCFM
 
 /// Conditional Flow Matching with Classifier-Free Guidance
-public class ConditionalCFM: BASECFM {
+class ConditionalCFM: BASECFM {
   let tScheduler: String
   let trainingCfgRate: Float
   let inferenceCfgRate: Float
 
   @ModuleInfo(key: "estimator") var estimatorModule: ConditionalDecoder?
 
-  public init(
+  init(
     inChannels: Int,
     cfmParams: CFMParams,
     nSpks: Int = 1,
@@ -117,7 +117,7 @@ public class ConditionalCFM: BASECFM {
     super.init(nFeats: inChannels, cfmParams: cfmParams, nSpks: nSpks, spkEmbDim: spkEmbDim)
   }
 
-  public func callAsFunction(
+  func callAsFunction(
     mu: MLXArray,
     mask: MLXArray,
     nTimesteps: Int,
@@ -218,11 +218,11 @@ public class ConditionalCFM: BASECFM {
 // MARK: - CausalConditionalCFM
 
 /// Causal Conditional Flow Matching with fixed noise
-public class CausalConditionalCFM: ConditionalCFM {
+class CausalConditionalCFM: ConditionalCFM {
   /// Pre-generated random noise - underscore prefix excludes from parameter validation
   var _randNoise: MLXArray
 
-  override public init(
+  override init(
     inChannels: Int = 240,
     cfmParams: CFMParams = DefaultCFMParams,
     nSpks: Int = 1,
@@ -234,7 +234,7 @@ public class CausalConditionalCFM: ConditionalCFM {
     super.init(inChannels: inChannels, cfmParams: cfmParams, nSpks: nSpks, spkEmbDim: spkEmbDim, estimator: estimator)
   }
 
-  public func callAsFunction(
+  func callAsFunction(
     mu: MLXArray,
     mask: MLXArray,
     nTimesteps: Int,
