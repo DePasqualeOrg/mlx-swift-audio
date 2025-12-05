@@ -145,21 +145,23 @@ final class EngineManager {
     }
   }
 
-  /// Generate with streaming (Kokoro and Marvis)
+  /// Generate with streaming
   func generateStreaming(text: String, speed: Float) -> AsyncThrowingStream<AudioChunk, Error> {
     switch selectedProvider {
       case .kokoro:
         kokoroEngine.generateStreaming(text, voice: kokoroVoice, speed: speed)
       case .marvis:
         marvisEngine.generateStreaming(text, voice: marvisVoice)
-      default:
-        AsyncThrowingStream { continuation in
-          continuation.finish(throwing: TTSError.invalidArgument("Streaming not supported for \(selectedProvider.displayName)"))
-        }
+      case .orpheus:
+        orpheusEngine.generateStreaming(text, voice: orpheusVoice)
+      case .outetts:
+        outeTTSEngine.generateStreaming(text)
+      case .chatterbox:
+        chatterboxEngine.generateStreaming(text, referenceAudio: chatterboxReferenceAudio)
     }
   }
 
-  /// Stream and play audio in real time (Kokoro and Marvis)
+  /// Stream and play audio in real time
   func sayStreaming(text: String, speed: Float) async throws -> AudioResult {
     error = nil
 
@@ -169,8 +171,12 @@ final class EngineManager {
           return try await kokoroEngine.sayStreaming(text, voice: kokoroVoice, speed: speed)
         case .marvis:
           return try await marvisEngine.sayStreaming(text, voice: marvisVoice)
-        default:
-          throw TTSError.invalidArgument("Streaming not supported for \(selectedProvider.displayName)")
+        case .orpheus:
+          return try await orpheusEngine.sayStreaming(text, voice: orpheusVoice)
+        case .outetts:
+          return try await outeTTSEngine.sayStreaming(text)
+        case .chatterbox:
+          return try await chatterboxEngine.sayStreaming(text, referenceAudio: chatterboxReferenceAudio)
       }
     } catch {
       let ttsError = (error as? TTSError) ?? TTSError.generationFailed(underlying: error)

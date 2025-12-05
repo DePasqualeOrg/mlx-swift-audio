@@ -1,34 +1,6 @@
 @preconcurrency import AVFoundation
 import Foundation
 
-/// Actor for thread-safe buffer tracking
-private actor BufferTracker {
-  private var scheduled: Int = 0
-  private var completed: Int = 0
-
-  func reset() {
-    scheduled = 0
-    completed = 0
-  }
-
-  func incrementScheduled() {
-    scheduled += 1
-  }
-
-  func incrementCompleted() -> Bool {
-    completed += 1
-    return completed == scheduled && scheduled > 0
-  }
-
-  func areAllCompleted() -> Bool {
-    completed == scheduled && scheduled > 0
-  }
-
-  var pendingCount: Int {
-    max(0, scheduled - completed)
-  }
-}
-
 /// Plays raw audio samples for TTS engines
 @Observable
 @MainActor
@@ -46,8 +18,6 @@ final class AudioSamplePlayer {
   @ObservationIgnored private var engine: AVAudioEngine!
   @ObservationIgnored private var playerNode: AVAudioPlayerNode!
   @ObservationIgnored private var audioFormat: AVAudioFormat!
-  @ObservationIgnored private let bufferTracker = BufferTracker()
-  @ObservationIgnored private var playbackMonitorTimer: Timer?
   @ObservationIgnored private var hasStartedPlayback: Bool = false
   @ObservationIgnored private var playbackCompletionContinuation: CheckedContinuation<Void, Never>?
 
@@ -101,9 +71,8 @@ final class AudioSamplePlayer {
   func play(samples: [Float], volumeBoost: Float = TTSConstants.Audio.volumeBoostFactor) async {
     guard !samples.isEmpty else { return }
 
-    // Stop any current playback and reset counters (but don't restart engine)
+    // Stop any current playback (but don't restart engine)
     await stop()
-    await resetBufferCounters()
     resetEngineIfNeeded()
 
     guard let buffer = createBuffer(from: samples, volumeBoost: volumeBoost) else {
@@ -111,26 +80,15 @@ final class AudioSamplePlayer {
       return
     }
 
-    await scheduleBuffer(buffer)
+    scheduleBuffer(buffer)
 
     playerNode.play()
     isPlaying = true
     hasStartedPlayback = true
 
-    // Await completion via continuation (resumed by checkIfPlaybackComplete)
+    // Await completion (resumed by buffer completion callback)
     await withCheckedContinuation { continuation in
       self.playbackCompletionContinuation = continuation
-      self.startPlaybackMonitoring()
-    }
-  }
-
-  /// Wait for current playback to complete (used after enqueuing streaming audio)
-  func awaitCompletion() async {
-    guard isPlaying else { return }
-
-    await withCheckedContinuation { continuation in
-      self.playbackCompletionContinuation = continuation
-      self.startPlaybackMonitoring()
     }
   }
 
@@ -160,16 +118,10 @@ final class AudioSamplePlayer {
       queuedSampleCount += thisLength
       let decrementAmount = thisLength
 
-      Task { await bufferTracker.incrementScheduled() }
-
       playerNode.scheduleBuffer(buffer, completionCallbackType: .dataPlayedBack) { [weak self] _ in
         Task { @MainActor [weak self] in
           guard let self else { return }
           queuedSampleCount = max(0, queuedSampleCount - decrementAmount)
-          let allDone = await bufferTracker.incrementCompleted()
-          if allDone, !playerNode.isPlaying {
-            isPlaying = false
-          }
         }
       }
 
@@ -199,8 +151,6 @@ final class AudioSamplePlayer {
 
   /// Stop playback and reset state
   func stop() async {
-    stopPlaybackMonitoring()
-
     // Resume any waiting continuation before stopping
     playbackCompletionContinuation?.resume()
     playbackCompletionContinuation = nil
@@ -214,8 +164,6 @@ final class AudioSamplePlayer {
         continuation.resume()
       }
     }
-
-    await resetBufferCounters()
 
     isPlaying = false
     hasStartedPlayback = false
@@ -244,7 +192,7 @@ final class AudioSamplePlayer {
     }
   }
 
-  // MARK: - Buffer Creation
+  // MARK: - Private
 
   private func createBuffer(from samples: [Float], volumeBoost: Float) -> AVAudioPCMBuffer? {
     let frameCount = AVAudioFrameCount(samples.count)
@@ -268,75 +216,19 @@ final class AudioSamplePlayer {
     return buffer
   }
 
-  private func scheduleBuffer(_ buffer: AVAudioPCMBuffer) async {
-    await bufferTracker.incrementScheduled()
-
+  private func scheduleBuffer(_ buffer: AVAudioPCMBuffer) {
     playerNode.scheduleBuffer(buffer, at: nil, options: [], completionCallbackType: .dataPlayedBack) { [weak self] _ in
       Task { @MainActor [weak self] in
         guard let self else { return }
-        let allDone = await bufferTracker.incrementCompleted()
-        if allDone {
-          checkIfPlaybackComplete()
+        // Playback complete when player stops
+        if hasStartedPlayback, !playerNode.isPlaying {
+          isPlaying = false
+          hasStartedPlayback = false
+          playbackCompletionContinuation?.resume()
+          playbackCompletionContinuation = nil
         }
       }
     }
-  }
-
-  // MARK: - Playback Monitoring
-
-  private func startPlaybackMonitoring() {
-    stopPlaybackMonitoring()
-
-    playbackMonitorTimer = Timer.scheduledTimer(withTimeInterval: TTSConstants.Audio.playbackMonitorInterval, repeats: true) { [weak self] timer in
-      guard let self else {
-        timer.invalidate()
-        return
-      }
-      Task { @MainActor in
-        self.checkIfPlaybackComplete()
-      }
-    }
-
-    RunLoop.current.add(playbackMonitorTimer!, forMode: .common)
-
-    // Fallback timeout
-    Task {
-      try? await Task.sleep(for: .seconds(TTSConstants.Timing.maxMonitoringDuration))
-      await MainActor.run {
-        if self.playbackMonitorTimer != nil {
-          self.stopPlaybackMonitoring()
-          self.isPlaying = false
-        }
-      }
-    }
-  }
-
-  private func stopPlaybackMonitoring() {
-    playbackMonitorTimer?.invalidate()
-    playbackMonitorTimer = nil
-  }
-
-  private func checkIfPlaybackComplete() {
-    Task {
-      let allCompleted = await bufferTracker.areAllCompleted()
-      let isActuallyPlaying = playerNode.isPlaying
-
-      if !isActuallyPlaying, allCompleted {
-        stopPlaybackMonitoring()
-        isPlaying = false
-        hasStartedPlayback = false
-
-        // Resume any waiting continuation
-        playbackCompletionContinuation?.resume()
-        playbackCompletionContinuation = nil
-      }
-    }
-  }
-
-  // MARK: - Private Helpers
-
-  private func resetBufferCounters() async {
-    await bufferTracker.reset()
   }
 
   private func resetEngineIfNeeded() {

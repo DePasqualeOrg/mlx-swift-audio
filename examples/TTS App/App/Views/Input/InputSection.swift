@@ -34,8 +34,8 @@ struct InputSection: View {
         },
       )
 
-      // Streaming option for supported engines
-      if appState.supportsStreaming {
+      // Streaming option
+      VStack {
         Button {
           Task {
             if !appState.isLoaded {
@@ -52,6 +52,10 @@ struct InputSection: View {
         }
         .buttonStyle(.bordered)
         .disabled(appState.isModelLoading || appState.inputText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+
+        Text(appState.streamingGranularity.shortDescription)
+          .font(.caption)
+          .foregroundStyle(.secondary)
       }
     }
   }

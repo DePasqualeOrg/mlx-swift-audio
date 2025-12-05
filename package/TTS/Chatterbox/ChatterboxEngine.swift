@@ -53,6 +53,7 @@ public final class ChatterboxEngine: TTSEngine {
   // MARK: - TTSEngine Protocol Properties
 
   public let provider: TTSProvider = .chatterbox
+  public let streamingGranularity: StreamingGranularity = .sentence
   public private(set) var isLoaded: Bool = false
   public private(set) var isGenerating: Bool = false
   public private(set) var isPlaying: Bool = false
@@ -426,5 +427,153 @@ public final class ChatterboxEngine: TTSEngine {
   ) async throws {
     let audio = try await generate(text, referenceAudio: referenceAudio)
     await play(audio)
+  }
+
+  // MARK: - Streaming
+
+  /// Generate audio as a stream of chunks (one per sentence)
+  /// - Parameters:
+  ///   - text: The text to synthesize
+  ///   - referenceAudio: Prepared reference audio (if nil, uses default sample)
+  /// - Returns: An async stream of audio chunks
+  public func generateStreaming(
+    _ text: String,
+    referenceAudio: ChatterboxReferenceAudio? = nil,
+  ) -> AsyncThrowingStream<AudioChunk, Error> {
+    // We need to prepare the reference audio before streaming starts
+    // This requires an async setup, so we handle it inside the stream
+    AsyncThrowingStream { continuation in
+      Task { @MainActor [weak self] in
+        guard let self else {
+          continuation.finish()
+          return
+        }
+
+        // Auto-load if needed
+        if !isLoaded {
+          do {
+            try await load()
+          } catch {
+            continuation.finish(throwing: error)
+            return
+          }
+        }
+
+        guard let chatterboxTTS else {
+          continuation.finish(throwing: TTSError.modelNotLoaded)
+          return
+        }
+
+        // Prepare reference audio once for all sentences
+        let ref: ChatterboxReferenceAudio
+        do {
+          if let referenceAudio {
+            ref = referenceAudio
+          } else {
+            if defaultReferenceAudio == nil {
+              defaultReferenceAudio = try await prepareDefaultReferenceAudio(exaggeration: exaggeration)
+            }
+            ref = defaultReferenceAudio!
+          }
+        } catch {
+          continuation.finish(throwing: error)
+          return
+        }
+
+        let trimmedText = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedText.isEmpty else {
+          continuation.finish(throwing: TTSError.invalidArgument("Text cannot be empty"))
+          return
+        }
+
+        let sentences = SentenceTokenizer.splitIntoSentences(text: trimmedText)
+        guard !sentences.isEmpty else {
+          continuation.finish(throwing: TTSError.invalidArgument("Failed to split text into sentences"))
+          return
+        }
+
+        let startTime = Date()
+
+        for (index, sentence) in sentences.enumerated() {
+          let result = await chatterboxTTS.generate(
+            text: sentence,
+            conditionals: ref.conditionals,
+            exaggeration: exaggeration,
+            cfgWeight: cfgWeight,
+            temperature: temperature,
+            repetitionPenalty: repetitionPenalty,
+            minP: minP,
+            topP: topP,
+            maxNewTokens: maxNewTokens,
+          )
+
+          let chunk = AudioChunk(
+            samples: result.audio,
+            sampleRate: result.sampleRate,
+            isLast: index == sentences.count - 1,
+            processingTime: Date().timeIntervalSince(startTime),
+          )
+          continuation.yield(chunk)
+
+          MLX.GPU.clearCache()
+        }
+
+        continuation.finish()
+      }
+    }
+  }
+
+  /// Play audio with streaming (plays as chunks arrive)
+  /// - Parameters:
+  ///   - text: The text to synthesize
+  ///   - referenceAudio: Prepared reference audio (if nil, uses default sample)
+  @discardableResult
+  public func sayStreaming(
+    _ text: String,
+    referenceAudio: ChatterboxReferenceAudio? = nil,
+  ) async throws -> AudioResult {
+    if !isLoaded {
+      try await load()
+    }
+
+    isPlaying = true
+    isGenerating = true
+    var allSamples: [Float] = []
+    var totalProcessingTime: TimeInterval = 0
+
+    do {
+      for try await chunk in generateStreaming(text, referenceAudio: referenceAudio) {
+        allSamples.append(contentsOf: chunk.samples)
+        totalProcessingTime = chunk.processingTime
+        audioPlayer.enqueue(samples: chunk.samples, prebufferSeconds: 0)
+      }
+
+      // Streaming complete - audio continues playing from queue
+      isPlaying = false
+      isGenerating = false
+
+      if !allSamples.isEmpty {
+        do {
+          let fileURL = try AudioFileWriter.save(
+            samples: allSamples,
+            sampleRate: provider.sampleRate,
+            filename: TTSConstants.outputFilename,
+          )
+          lastGeneratedAudioURL = fileURL
+        } catch {
+          Log.audio.error("Failed to save audio file: \(error.localizedDescription)")
+        }
+      }
+
+      return .samples(
+        data: allSamples,
+        sampleRate: provider.sampleRate,
+        processingTime: totalProcessingTime,
+      )
+    } catch {
+      isPlaying = false
+      isGenerating = false
+      throw error
+    }
   }
 }

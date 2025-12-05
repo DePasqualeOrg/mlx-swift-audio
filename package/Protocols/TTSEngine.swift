@@ -13,6 +13,9 @@ public protocol TTSEngine: Observable {
   /// The provider type for this engine
   var provider: TTSProvider { get }
 
+  /// The granularity at which this engine streams audio
+  var streamingGranularity: StreamingGranularity { get }
+
   // MARK: - State Properties
 
   /// Whether the model is loaded and ready for generation
@@ -99,11 +102,36 @@ public enum TTS {
   public static func chatterbox() -> ChatterboxEngine { ChatterboxEngine() }
 }
 
-/// Marker protocol for engines that support streaming generation.
-///
-/// Engines conforming to this protocol provide `generateStreaming` and `sayStreaming` methods.
-/// Method signatures are engine-specific due to different voice types.
-public protocol StreamingTTSEngine: TTSEngine {}
+/// Describes how an engine streams audio output
+public enum StreamingGranularity: Sendable {
+  /// Audio is streamed sentence-by-sentence. Each chunk contains a complete sentence.
+  /// Higher latency per chunk, but natural break points.
+  case sentence
+
+  /// Audio is streamed frame-by-frame at regular intervals.
+  /// Lower latency, continuous output.
+  case frame
+
+  /// Human-readable description for UI display
+  public var description: String {
+    switch self {
+      case .sentence:
+        "Sentence-by-sentence"
+      case .frame:
+        "Frame-by-frame"
+    }
+  }
+
+  /// Short description for compact UI
+  public var shortDescription: String {
+    switch self {
+      case .sentence:
+        "Per sentence"
+      case .frame:
+        "Continuous"
+    }
+  }
+}
 
 /// A chunk of audio data for streaming playback
 public struct AudioChunk: Sendable {

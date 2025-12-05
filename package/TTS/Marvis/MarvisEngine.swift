@@ -4,7 +4,7 @@ import MLX
 /// Marvis TTS engine - advanced conversational TTS with streaming support
 @Observable
 @MainActor
-public final class MarvisEngine: TTSEngine, StreamingTTSEngine {
+public final class MarvisEngine: TTSEngine {
   // MARK: - Types
 
   /// Model variants for Marvis TTS
@@ -64,6 +64,7 @@ public final class MarvisEngine: TTSEngine, StreamingTTSEngine {
   // MARK: - TTSEngine Protocol Properties
 
   public let provider: TTSProvider = .marvis
+  public let streamingGranularity: StreamingGranularity = .frame
   public private(set) var isLoaded: Bool = false
   public private(set) var isGenerating: Bool = false
   public private(set) var isPlaying: Bool = false
@@ -344,7 +345,7 @@ public final class MarvisEngine: TTSEngine, StreamingTTSEngine {
         audioPlayer.enqueue(samples: chunk.samples)
       }
 
-      await audioPlayer.awaitCompletion()
+      // Streaming complete - audio continues playing from queue
       isPlaying = false
 
       if !allSamples.isEmpty {

@@ -42,7 +42,7 @@ final class AppState {
   var error: TTSError? { engineManager.error }
   var generationTime: TimeInterval { engineManager.generationTime }
   var lastGeneratedAudioURL: URL? { engineManager.lastGeneratedAudioURL }
-  var supportsStreaming: Bool { engineManager.currentEngine is StreamingTTSEngine }
+  var streamingGranularity: StreamingGranularity { engineManager.currentEngine.streamingGranularity }
 
   var canGenerate: Bool {
     isLoaded && !inputText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && !isGenerating
@@ -99,13 +99,9 @@ final class AppState {
     }
   }
 
-  /// Generate with streaming (Kokoro and Marvis)
+  /// Generate with streaming
   func generateStreaming() async {
     guard canGenerate else { return }
-    guard supportsStreaming else {
-      statusMessage = "Streaming not supported for \(selectedProvider.displayName)"
-      return
-    }
 
     stopRequested = false
     statusMessage = "Streaming..."

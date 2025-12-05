@@ -9,6 +9,7 @@ public final class OuteTTSEngine: TTSEngine {
   // MARK: - TTSEngine Protocol Properties
 
   public let provider: TTSProvider = .outetts
+  public let streamingGranularity: StreamingGranularity = .sentence
   public private(set) var isLoaded: Bool = false
   public private(set) var isGenerating: Bool = false
   public private(set) var isPlaying: Bool = false
@@ -175,5 +176,84 @@ public final class OuteTTSEngine: TTSEngine {
   ) async throws {
     let audio = try await generate(text, speaker: speaker)
     await play(audio)
+  }
+
+  // MARK: - Streaming
+
+  /// Generate audio as a stream of chunks (one per sentence)
+  /// - Parameters:
+  ///   - text: The text to synthesize
+  ///   - speaker: Optional speaker profile (nil uses default voice)
+  /// - Returns: An async stream of audio chunks
+  public func generateStreaming(
+    _ text: String,
+    speaker: OuteTTSSpeakerProfile? = nil,
+  ) -> AsyncThrowingStream<AudioChunk, Error> {
+    sentenceStreamingGenerate(text: text, sampleRate: provider.sampleRate) { [self] sentence in
+      guard let outeTTS else {
+        throw TTSError.modelNotLoaded
+      }
+      let result = try await outeTTS.generate(
+        text: sentence,
+        speaker: speaker,
+        temperature: temperature,
+        topP: topP,
+      )
+      return result.audio
+    }
+  }
+
+  /// Play audio with streaming (plays as chunks arrive)
+  /// - Parameters:
+  ///   - text: The text to synthesize
+  ///   - speaker: Optional speaker profile (nil uses default voice)
+  @discardableResult
+  public func sayStreaming(
+    _ text: String,
+    speaker: OuteTTSSpeakerProfile? = nil,
+  ) async throws -> AudioResult {
+    if !isLoaded {
+      try await load()
+    }
+
+    isPlaying = true
+    isGenerating = true
+    var allSamples: [Float] = []
+    var totalProcessingTime: TimeInterval = 0
+
+    do {
+      for try await chunk in generateStreaming(text, speaker: speaker) {
+        allSamples.append(contentsOf: chunk.samples)
+        totalProcessingTime = chunk.processingTime
+        audioPlayer.enqueue(samples: chunk.samples, prebufferSeconds: 0)
+      }
+
+      // Streaming complete - audio continues playing from queue
+      isPlaying = false
+      isGenerating = false
+
+      if !allSamples.isEmpty {
+        do {
+          let fileURL = try AudioFileWriter.save(
+            samples: allSamples,
+            sampleRate: provider.sampleRate,
+            filename: TTSConstants.outputFilename,
+          )
+          lastGeneratedAudioURL = fileURL
+        } catch {
+          Log.audio.error("Failed to save audio file: \(error.localizedDescription)")
+        }
+      }
+
+      return .samples(
+        data: allSamples,
+        sampleRate: provider.sampleRate,
+        processingTime: totalProcessingTime,
+      )
+    } catch {
+      isPlaying = false
+      isGenerating = false
+      throw error
+    }
   }
 }

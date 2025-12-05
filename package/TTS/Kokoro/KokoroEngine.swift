@@ -4,7 +4,7 @@ import Foundation
 /// Kokoro TTS engine - fast, lightweight TTS with many voice options
 @Observable
 @MainActor
-public final class KokoroEngine: TTSEngine, StreamingTTSEngine {
+public final class KokoroEngine: TTSEngine {
   // MARK: - Voice
 
   /// Available voices for Kokoro TTS
@@ -98,6 +98,7 @@ public final class KokoroEngine: TTSEngine, StreamingTTSEngine {
   // MARK: - TTSEngine Protocol Properties
 
   public let provider: TTSProvider = .kokoro
+  public let streamingGranularity: StreamingGranularity = .sentence
   public private(set) var isLoaded: Bool = false
   public private(set) var isGenerating: Bool = false
   public private(set) var isPlaying: Bool = false
@@ -372,7 +373,7 @@ public final class KokoroEngine: TTSEngine, StreamingTTSEngine {
         audioPlayer.enqueue(samples: chunk.samples, prebufferSeconds: 0)
       }
 
-      await audioPlayer.awaitCompletion()
+      // Streaming complete - audio continues playing from queue
       isPlaying = false
 
       if !allSamples.isEmpty {
