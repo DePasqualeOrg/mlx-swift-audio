@@ -371,11 +371,9 @@ public final class ChatterboxEngine: TTSEngine {
     isGenerating = true
     generationTime = 0
 
-    let startTime = Date()
-
     do {
       // Generate audio using pre-computed conditionals
-      let samples = await chatterboxTTS.generateAudio(
+      let result = await chatterboxTTS.generate(
         text: trimmedText,
         conditionals: ref.conditionals,
         exaggeration: exaggeration,
@@ -387,19 +385,16 @@ public final class ChatterboxEngine: TTSEngine {
         maxNewTokens: maxNewTokens,
       )
 
-      generationTime = Date().timeIntervalSince(startTime)
-      Log.tts.timing("Chatterbox generation", duration: generationTime)
-
+      generationTime = result.processingTime
       isGenerating = false
 
-      let audioDuration = Double(samples.count) / Double(provider.sampleRate)
-      let rtf = generationTime / audioDuration
-      Log.tts.rtf("Chatterbox", rtf: rtf)
+      Log.tts.timing("Chatterbox generation", duration: result.processingTime)
+      Log.tts.rtf("Chatterbox", rtf: result.realTimeFactor)
 
       do {
         let fileURL = try AudioFileWriter.save(
-          samples: samples,
-          sampleRate: provider.sampleRate,
+          samples: result.audio,
+          sampleRate: result.sampleRate,
           filename: TTSConstants.outputFilename,
         )
         lastGeneratedAudioURL = fileURL
@@ -408,9 +403,9 @@ public final class ChatterboxEngine: TTSEngine {
       }
 
       return .samples(
-        data: samples,
-        sampleRate: provider.sampleRate,
-        processingTime: generationTime,
+        data: result.audio,
+        sampleRate: result.sampleRate,
+        processingTime: result.processingTime,
       )
 
     } catch {

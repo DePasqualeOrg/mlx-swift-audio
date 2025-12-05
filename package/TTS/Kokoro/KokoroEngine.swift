@@ -130,16 +130,18 @@ public final class KokoroEngine: TTSEngine, StreamingTTSEngine {
 
     Log.model.info("Loading Kokoro TTS model...")
 
-    // Reuse existing instance (preserves text processing after unload)
-    if kokoroTTS == nil {
-      kokoroTTS = KokoroTTS(
+    do {
+      kokoroTTS = try await KokoroTTS.load(
         repoId: KokoroWeightLoader.defaultRepoId,
         progressHandler: progressHandler ?? { _ in },
       )
-    }
 
-    isLoaded = true
-    Log.model.info("Kokoro TTS model loaded successfully")
+      isLoaded = true
+      Log.model.info("Kokoro TTS model loaded successfully")
+    } catch {
+      Log.model.error("Failed to load Kokoro model: \(error.localizedDescription)")
+      throw TTSError.modelLoadFailed(underlying: error)
+    }
   }
 
   public func stop() async {
@@ -154,18 +156,15 @@ public final class KokoroEngine: TTSEngine, StreamingTTSEngine {
   }
 
   public func unload() async {
-    await teardown(preserveTextProcessing: true)
+    await stop()
+    kokoroTTS = nil
+    isLoaded = false
+
+    Log.tts.debug("KokoroEngine unloaded")
   }
 
   public func cleanup() async throws {
-    await teardown(preserveTextProcessing: false)
-    kokoroTTS = nil
-  }
-
-  private func teardown(preserveTextProcessing: Bool) async {
-    await stop()
-    await kokoroTTS?.resetModel(preserveTextProcessing: preserveTextProcessing)
-    isLoaded = false
+    await unload()
   }
 
   // MARK: - Playback
@@ -216,9 +215,9 @@ public final class KokoroEngine: TTSEngine, StreamingTTSEngine {
     var firstChunkTime: TimeInterval = 0
 
     do {
-      for try await samples in try await kokoroTTS.generateAudioStream(
-        voice: voice,
+      for try await samples in try await kokoroTTS.generateStream(
         text: trimmedText,
+        voice: voice,
         speed: speed,
       ) {
         if firstChunkTime == 0 {
@@ -320,9 +319,9 @@ public final class KokoroEngine: TTSEngine, StreamingTTSEngine {
         var isFirst = true
 
         do {
-          for try await samples in try await kokoroTTS.generateAudioStream(
-            voice: voice,
+          for try await samples in try await kokoroTTS.generateStream(
             text: trimmedText,
+            voice: voice,
             speed: speed,
           ) {
             if isFirst {

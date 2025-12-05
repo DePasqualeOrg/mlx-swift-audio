@@ -67,7 +67,7 @@ actor ChatterboxTTS {
   ///   - minP: Minimum probability threshold
   ///   - topP: Top-p sampling threshold
   ///   - maxNewTokens: Maximum tokens to generate
-  /// - Returns: Generated audio as MLXArray
+  /// - Returns: Generated audio result
   func generate(
     text: String,
     conditionals: ChatterboxConditionals,
@@ -78,49 +78,12 @@ actor ChatterboxTTS {
     minP: Float = 0.05,
     topP: Float = 1.0,
     maxNewTokens: Int = 1000,
-  ) -> MLXArray {
-    model.generate(
+  ) -> TTSGenerationResult {
+    let startTime = CFAbsoluteTimeGetCurrent()
+
+    let audioArray = model.generate(
       text: text,
       conds: conditionals,
-      exaggeration: exaggeration,
-      cfgWeight: cfgWeight,
-      temperature: temperature,
-      repetitionPenalty: repetitionPenalty,
-      minP: minP,
-      topP: topP,
-      maxNewTokens: maxNewTokens,
-    )
-  }
-
-  /// Generate audio and return as Float array
-  ///
-  /// This runs on the actor's background executor, not blocking the main thread.
-  ///
-  /// - Parameters:
-  ///   - text: Text to synthesize
-  ///   - conditionals: Pre-computed reference audio conditionals
-  ///   - exaggeration: Emotion exaggeration factor
-  ///   - cfgWeight: Classifier-free guidance weight
-  ///   - temperature: Sampling temperature
-  ///   - repetitionPenalty: Penalty for repeated tokens
-  ///   - minP: Minimum probability threshold
-  ///   - topP: Top-p sampling threshold
-  ///   - maxNewTokens: Maximum tokens to generate
-  /// - Returns: Generated audio samples as Float array
-  func generateAudio(
-    text: String,
-    conditionals: ChatterboxConditionals,
-    exaggeration: Float = 0.1,
-    cfgWeight: Float = 0.5,
-    temperature: Float = 0.8,
-    repetitionPenalty: Float = 1.2,
-    minP: Float = 0.05,
-    topP: Float = 1.0,
-    maxNewTokens: Int = 1000,
-  ) -> [Float] {
-    let audioArray = generate(
-      text: text,
-      conditionals: conditionals,
       exaggeration: exaggeration,
       cfgWeight: cfgWeight,
       temperature: temperature,
@@ -133,8 +96,13 @@ actor ChatterboxTTS {
     // Ensure computation is complete
     audioArray.eval()
 
-    // Convert to Float array
-    return audioArray.asArray(Float.self)
+    let processingTime = CFAbsoluteTimeGetCurrent() - startTime
+
+    return TTSGenerationResult(
+      audio: audioArray.asArray(Float.self),
+      sampleRate: sampleRate,
+      processingTime: processingTime,
+    )
   }
 
   /// Output sample rate

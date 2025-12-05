@@ -152,29 +152,24 @@ public final class OrpheusEngine: TTSEngine {
     isGenerating = true
     generationTime = 0
 
-    let startTime = Date()
-
     do {
-      let samples = try await orpheusTTS.generateAudio(
-        voice: voice,
+      let result = try await orpheusTTS.generate(
         text: trimmedText,
+        voice: voice,
         temperature: temperature,
         topP: topP,
       )
 
-      generationTime = Date().timeIntervalSince(startTime)
-      Log.tts.timing("Orpheus generation", duration: generationTime)
-
+      generationTime = result.processingTime
       isGenerating = false
 
-      let audioDuration = Double(samples.count) / Double(provider.sampleRate)
-      let rtf = generationTime / audioDuration
-      Log.tts.rtf("Orpheus", rtf: rtf)
+      Log.tts.timing("Orpheus generation", duration: result.processingTime)
+      Log.tts.rtf("Orpheus", rtf: result.realTimeFactor)
 
       do {
         let fileURL = try AudioFileWriter.save(
-          samples: samples,
-          sampleRate: provider.sampleRate,
+          samples: result.audio,
+          sampleRate: result.sampleRate,
           filename: TTSConstants.outputFilename,
         )
         lastGeneratedAudioURL = fileURL
@@ -183,9 +178,9 @@ public final class OrpheusEngine: TTSEngine {
       }
 
       return .samples(
-        data: samples,
-        sampleRate: provider.sampleRate,
-        processingTime: generationTime,
+        data: result.audio,
+        sampleRate: result.sampleRate,
+        processingTime: result.processingTime,
       )
 
     } catch {

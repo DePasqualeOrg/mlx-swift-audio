@@ -54,64 +54,64 @@ struct OuteTTSConfig: Sendable {
   }
 }
 
-// MARK: - Generation Result
-
-struct OuteTTSGenerationResult: Sendable {
-  let audio: [Float]
-  let sampleRate: Int
-  let duration: TimeInterval
-  let tokenCount: Int
-  let processingTime: TimeInterval
-  let realTimeFactor: Double
-
-  init(audio: [Float], sampleRate: Int, duration: TimeInterval, tokenCount: Int, processingTime: TimeInterval) {
-    self.audio = audio
-    self.sampleRate = sampleRate
-    self.duration = duration
-    self.tokenCount = tokenCount
-    self.processingTime = processingTime
-    realTimeFactor = duration / processingTime
-  }
-}
-
 // MARK: - OuteTTS
 
+/// OuteTTS actor providing thread-safe text-to-speech generation.
+///
+/// Use the static `load()` factory method to create an initialized instance.
 actor OuteTTS {
   private let config: OuteTTSConfig
+  private let model: OuteTTSLMHeadModel
+  private let tokenizer: any Tokenizer
+  private nonisolated(unsafe) let audioProcessor: OuteTTSAudioProcessor
+  private let promptProcessor: OuteTTSPromptProcessor
+  private let defaultSpeaker: OuteTTSSpeakerProfile?
+  private let eosTokenId: Int
 
-  private nonisolated(unsafe) var model: OuteTTSLMHeadModel?
-  private nonisolated(unsafe) var tokenizer: (any Tokenizer)?
-  private nonisolated(unsafe) var audioProcessor: OuteTTSAudioProcessor?
-  private nonisolated(unsafe) var promptProcessor: OuteTTSPromptProcessor?
-  private var defaultSpeaker: OuteTTSSpeakerProfile?
-  private var eosTokenId: Int = 151_645 // Default for OuteTTS <|im_end|>
-  private var isLoaded: Bool = false
+  // MARK: - Initialization
 
-  init(config: OuteTTSConfig = .default) {
+  private init(
+    config: OuteTTSConfig,
+    model: OuteTTSLMHeadModel,
+    tokenizer: any Tokenizer,
+    audioProcessor: OuteTTSAudioProcessor,
+    promptProcessor: OuteTTSPromptProcessor,
+    defaultSpeaker: OuteTTSSpeakerProfile?,
+    eosTokenId: Int,
+  ) {
     self.config = config
+    self.model = model
+    self.tokenizer = tokenizer
+    self.audioProcessor = audioProcessor
+    self.promptProcessor = promptProcessor
+    self.defaultSpeaker = defaultSpeaker
+    self.eosTokenId = eosTokenId
   }
 
-  /// Load all model components
-  func load(progressHandler: @escaping @Sendable (Progress) -> Void = { _ in }) async throws {
-    let (model, tokenizer) = try await Self.loadOuteTTSModel(
+  /// Load and initialize an OuteTTS instance.
+  ///
+  /// - Parameters:
+  ///   - config: Configuration for the model
+  ///   - progressHandler: Callback for download progress
+  /// - Returns: A fully initialized OuteTTS actor
+  static func load(
+    config: OuteTTSConfig = .default,
+    progressHandler: @escaping @Sendable (Progress) -> Void = { _ in },
+  ) async throws -> OuteTTS {
+    // Load model and tokenizer
+    let (model, tokenizer) = try await loadOuteTTSModel(
       modelId: config.modelId,
       progressHandler: progressHandler,
     )
-    self.model = model
-    self.tokenizer = tokenizer
 
     // Get EOS token ID from tokenizer
-    if let eosId = tokenizer.convertTokenToId("<|im_end|>") {
-      eosTokenId = eosId
-    }
+    let eosTokenId = tokenizer.convertTokenToId("<|im_end|>") ?? 151_645
 
     // Load audio codec
     let audioProcessor = OuteTTSAudioProcessor(sampleRate: config.sampleRate)
     try await audioProcessor.loadCodec(progressHandler: progressHandler)
-    self.audioProcessor = audioProcessor
 
     // buildTokenMaps caches special token IDs for fast prompt building
-    // This avoids slow tokenizer.encode() calls on the full prompt string
     let promptProcessor = OuteTTSPromptProcessor()
     promptProcessor.buildTokenMaps(
       convertTokenToId: { token in
@@ -121,14 +121,23 @@ actor OuteTTS {
         tokenizer.encode(text: text, addSpecialTokens: false)
       },
     )
-    self.promptProcessor = promptProcessor
 
     // Load default speaker profile from bundle
-    defaultSpeaker = loadDefaultSpeaker()
-    isLoaded = true
+    let defaultSpeaker = loadDefaultSpeaker()
+
+    return OuteTTS(
+      config: config,
+      model: model,
+      tokenizer: tokenizer,
+      audioProcessor: audioProcessor,
+      promptProcessor: promptProcessor,
+      defaultSpeaker: defaultSpeaker,
+      eosTokenId: eosTokenId,
+    )
   }
 
-  /// Load OuteTTS model and tokenizer directly (like Orpheus approach)
+  // MARK: - Model Loading
+
   private static func loadOuteTTSModel(
     modelId: String,
     progressHandler: @escaping @Sendable (Progress) -> Void,
@@ -258,7 +267,7 @@ actor OuteTTS {
   }
 
   /// Load default speaker profile from bundle
-  private func loadDefaultSpeaker() -> OuteTTSSpeakerProfile? {
+  private static func loadDefaultSpeaker() -> OuteTTSSpeakerProfile? {
     guard let url = Bundle.module.url(forResource: "default_speaker", withExtension: "json") else {
       return nil
     }
@@ -271,6 +280,8 @@ actor OuteTTS {
     }
   }
 
+  // MARK: - Public API
+
   /// Get speaker profile (from file, reference audio, or default)
   func getSpeaker(
     voicePath: String? = nil,
@@ -280,12 +291,12 @@ actor OuteTTS {
   ) async throws -> OuteTTSSpeakerProfile? {
     // Load from file
     if let path = voicePath {
-      return try await audioProcessor?.loadSpeaker(from: path)
+      return try await audioProcessor.loadSpeaker(from: path)
     }
 
     // Create from reference audio
     if let audio = referenceAudio, let text = referenceText, let words = referenceWords {
-      return try await audioProcessor?.createSpeakerFromTranscription(
+      return try await audioProcessor.createSpeakerFromTranscription(
         audio: audio,
         text: text,
         words: words,
@@ -297,20 +308,13 @@ actor OuteTTS {
   }
 
   /// Generate audio from text
-  func generateAudio(
+  func generate(
     text: String,
     speaker: OuteTTSSpeakerProfile? = nil,
     temperature: Float? = nil,
     topP: Float? = nil,
     maxTokens: Int? = nil,
-  ) async throws -> OuteTTSGenerationResult {
-    guard let model,
-          let promptProcessor,
-          let audioProcessor
-    else {
-      throw OuteTTSEngineError.modelNotLoaded
-    }
-
+  ) async throws -> TTSGenerationResult {
     let startTime = CFAbsoluteTimeGetCurrent()
 
     // Use provided speaker or default
@@ -319,7 +323,6 @@ actor OuteTTS {
     // getCompletionPromptTokens builds token IDs directly instead of
     // building a string and tokenizing it. This avoids 38s of BPE tokenization
     // on the ~18,000 character prompt with thousands of special tokens.
-    // Audio code tokens are computed as (baseId + codeValue) instead of looked up.
     let inputTokens = promptProcessor.getCompletionPromptTokens(text: text, speaker: speakerProfile)
 
     // Generation parameters
@@ -425,15 +428,11 @@ actor OuteTTS {
     let audioFlat = audio.reshaped([-1])
     let audioData = audioFlat.asArray(Float.self)
 
-    let endTime = CFAbsoluteTimeGetCurrent()
-    let processingTime = endTime - startTime
-    let duration = Double(audioData.count) / Double(config.sampleRate)
+    let processingTime = CFAbsoluteTimeGetCurrent() - startTime
 
-    return OuteTTSGenerationResult(
+    return TTSGenerationResult(
       audio: audioData,
       sampleRate: config.sampleRate,
-      duration: duration,
-      tokenCount: generatedTokens.count,
       processingTime: processingTime,
     )
   }
@@ -485,11 +484,6 @@ actor OuteTTS {
     }
 
     return chunks.isEmpty ? [text] : chunks
-  }
-
-  /// Check if the engine is loaded
-  var loaded: Bool {
-    isLoaded
   }
 }
 

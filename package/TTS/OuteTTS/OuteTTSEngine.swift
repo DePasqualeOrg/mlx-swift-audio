@@ -50,9 +50,9 @@ public final class OuteTTSEngine: TTSEngine {
     Log.model.info("Loading OuteTTS model...")
 
     do {
-      let engine = OuteTTS()
-      try await engine.load(progressHandler: progressHandler ?? { _ in })
-      outeTTS = engine
+      outeTTS = try await OuteTTS.load(
+        progressHandler: progressHandler ?? { _ in },
+      )
 
       isLoaded = true
       Log.model.info("OuteTTS model loaded successfully")
@@ -127,29 +127,24 @@ public final class OuteTTSEngine: TTSEngine {
     isGenerating = true
     generationTime = 0
 
-    let startTime = Date()
-
     do {
-      let result = try await outeTTS.generateAudio(
+      let result = try await outeTTS.generate(
         text: trimmedText,
         speaker: speaker,
         temperature: temperature,
         topP: topP,
       )
 
-      generationTime = Date().timeIntervalSince(startTime)
-      Log.tts.timing("OuteTTS generation", duration: generationTime)
-
+      generationTime = result.processingTime
       isGenerating = false
 
-      let audioDuration = result.duration
-      let rtf = generationTime / audioDuration
-      Log.tts.rtf("OuteTTS", rtf: rtf)
+      Log.tts.timing("OuteTTS generation", duration: result.processingTime)
+      Log.tts.rtf("OuteTTS", rtf: result.realTimeFactor)
 
       do {
         let fileURL = try AudioFileWriter.save(
           samples: result.audio,
-          sampleRate: provider.sampleRate,
+          sampleRate: result.sampleRate,
           filename: TTSConstants.outputFilename,
         )
         lastGeneratedAudioURL = fileURL
@@ -159,8 +154,8 @@ public final class OuteTTSEngine: TTSEngine {
 
       return .samples(
         data: result.audio,
-        sampleRate: provider.sampleRate,
-        processingTime: generationTime,
+        sampleRate: result.sampleRate,
+        processingTime: result.processingTime,
       )
 
     } catch {

@@ -3,12 +3,15 @@ import MLX
 import MLXNN
 import Synchronization
 
+/// Kokoro TTS actor providing thread-safe text-to-speech generation.
+///
+/// Use the static `load()` factory method to create an initialized instance.
 actor KokoroTTS {
   enum KokoroTTSError: LocalizedError {
     case tooManyTokens
     case sentenceSplitError
-    case modelNotInitialized
     case audioGenerationError
+    case voiceLoadFailed
 
     var errorDescription: String? {
       switch self {
@@ -16,10 +19,10 @@ actor KokoroTTS {
           "Input text exceeds maximum token limit"
         case .sentenceSplitError:
           "Failed to split text into sentences"
-        case .modelNotInitialized:
-          "Model has not been initialized"
         case .audioGenerationError:
           "Failed to generate audio"
+        case .voiceLoadFailed:
+          "Failed to load voice"
       }
     }
   }
@@ -31,69 +34,49 @@ actor KokoroTTS {
 
   // MARK: - Properties
 
-  private var model: KokoroModel!
-  private var eSpeakEngine: ESpeakNGEngine!
-  private var kokoroTokenizer: KokoroTokenizer!
+  private let model: KokoroModel
+  private let eSpeakEngine: ESpeakNGEngine
+  private let kokoroTokenizer: KokoroTokenizer
+  private let repoId: String
+  private let progressHandler: @Sendable (Progress) -> Void
+
   private var chosenVoice: KokoroEngine.Voice?
-  private var voice: MLXArray!
+  private var voice: MLXArray?
 
-  // Flag to indicate if model components are initialized
-  private var isModelInitialized = false
+  // MARK: - Initialization
 
-  // Hugging Face repo configuration
-  private var repoId: String
-  private var progressHandler: @Sendable (Progress) -> Void
-
-  /// Initializes with optional Hugging Face repo configuration.
-  ///
-  /// Models are downloaded from Hugging Face Hub on first use.
-  init(
-    repoId: String = KokoroWeightLoader.defaultRepoId,
-    progressHandler: @escaping @Sendable (Progress) -> Void = { _ in },
+  private init(
+    model: KokoroModel,
+    eSpeakEngine: ESpeakNGEngine,
+    kokoroTokenizer: KokoroTokenizer,
+    repoId: String,
+    progressHandler: @escaping @Sendable (Progress) -> Void,
   ) {
+    self.model = model
+    self.eSpeakEngine = eSpeakEngine
+    self.kokoroTokenizer = kokoroTokenizer
     self.repoId = repoId
     self.progressHandler = progressHandler
   }
 
-  // Reset the model to free up memory
-  func resetModel(preserveTextProcessing: Bool = true) {
-    // Reset heavy ML model components
-    model = nil
-    voice = nil
-    chosenVoice = nil
-    isModelInitialized = false
-
-    // Optionally preserve text processing components for faster restart
-    if !preserveTextProcessing {
-      if let _ = eSpeakEngine {
-        // Ensure eSpeakEngine is terminated properly
-        eSpeakEngine = nil
-      }
-      kokoroTokenizer = nil
-    }
-  }
-
-  // Initialize model on demand
-  private func ensureModelInitialized() async throws {
-    if isModelInitialized {
-      return
-    }
-
-    // Initialize text processing components first (less expensive)
-    if eSpeakEngine == nil {
-      eSpeakEngine = try ESpeakNGEngine()
-    }
-
-    if kokoroTokenizer == nil {
-      kokoroTokenizer = KokoroTokenizer(engine: eSpeakEngine)
-    }
+  /// Load and initialize a KokoroTTS instance.
+  ///
+  /// - Parameters:
+  ///   - repoId: Hugging Face repository ID for the model
+  ///   - progressHandler: Callback for download progress
+  /// - Returns: A fully initialized KokoroTTS actor
+  static func load(
+    repoId: String = KokoroWeightLoader.defaultRepoId,
+    progressHandler: @escaping @Sendable (Progress) -> Void = { _ in },
+  ) async throws -> KokoroTTS {
+    // Initialize text processing components
+    let eSpeakEngine = try ESpeakNGEngine()
+    let kokoroTokenizer = KokoroTokenizer(engine: eSpeakEngine)
 
     // Load lexicons from GitHub (cached on disk)
-    if !kokoroTokenizer.lexiconsLoaded {
-      async let usLexicon = LexiconLoader.loadUSLexicon()
-      async let gbLexicon = LexiconLoader.loadGBLexicon()
-      try await kokoroTokenizer.setLexicons(us: usLexicon, gb: gbLexicon)
-    }
+    async let usLexicon = LexiconLoader.loadUSLexicon()
+    async let gbLexicon = LexiconLoader.loadGBLexicon()
+    try await kokoroTokenizer.setLexicons(us: usLexicon, gb: gbLexicon)
 
     // Load weights from Hugging Face
     let weights = try await KokoroWeightLoader.loadWeights(
@@ -101,12 +84,97 @@ actor KokoroTTS {
       progressHandler: progressHandler,
     )
 
-    // Create model and load weights using standard MLX pattern
-    model = KokoroModel()
+    // Create model and load weights
+    let model = KokoroModel()
     let parameters = ModuleParameters.unflattened(weights)
     try model.update(parameters: parameters, verify: .noUnusedKeys)
 
-    isModelInitialized = true
+    return KokoroTTS(
+      model: model,
+      eSpeakEngine: eSpeakEngine,
+      kokoroTokenizer: kokoroTokenizer,
+      repoId: repoId,
+      progressHandler: progressHandler,
+    )
+  }
+
+  // MARK: - Public API
+
+  func generate(
+    text: String,
+    voice: KokoroEngine.Voice,
+    speed: Float = 1.0,
+    chunkCallback: @escaping @Sendable ([Float]) -> Void,
+  ) async throws {
+    let sentences = SentenceTokenizer.splitIntoSentences(text: text)
+    if sentences.isEmpty {
+      throw KokoroTTSError.sentenceSplitError
+    }
+
+    self.voice = nil
+
+    for sentence in sentences {
+      let audio = try await generateAudioForSentence(text: sentence, voice: voice, speed: speed)
+      chunkCallback(audio)
+      MLX.GPU.clearCache()
+    }
+  }
+
+  func generateStream(
+    text: String,
+    voice: KokoroEngine.Voice,
+    speed: Float = 1.0,
+  ) async throws -> AsyncThrowingStream<[Float], Error> {
+    let sentences = SentenceTokenizer.splitIntoSentences(text: text)
+    if sentences.isEmpty {
+      throw KokoroTTSError.sentenceSplitError
+    }
+
+    self.voice = nil
+    let index = Atomic<Int>(0)
+
+    return AsyncThrowingStream {
+      let i = index.wrappingAdd(1, ordering: .relaxed).oldValue
+      guard i < sentences.count else { return nil }
+
+      let audio = try await self.generateAudioForSentence(text: sentences[i], voice: voice, speed: speed)
+      MLX.GPU.clearCache()
+      return audio
+    }
+  }
+
+  // MARK: - Private Methods
+
+  private func generateAudioForSentence(
+    text: String,
+    voice: KokoroEngine.Voice,
+    speed: Float,
+  ) async throws -> [Float] {
+    if text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+      return [0.0]
+    }
+
+    // Load voice if it changed or if it was cleared
+    if chosenVoice != voice || self.voice == nil {
+      self.voice = try await VoiceLoader.loadVoice(
+        voice,
+        repoId: repoId,
+        progressHandler: progressHandler,
+      )
+      self.voice?.eval()
+
+      try kokoroTokenizer.setLanguage(for: voice)
+      chosenVoice = voice
+    }
+
+    let phonemizedResult = try kokoroTokenizer.phonemize(text)
+
+    let inputIds = PhonemeTokenizer.tokenize(phonemizedText: phonemizedResult.phonemes)
+    guard inputIds.count <= Self.maxTokenCount else {
+      throw KokoroTTSError.tooManyTokens
+    }
+
+    return try generateAudioForTokens(inputIds: inputIds, speed: speed)
   }
 
   private func generateAudioForTokens(
@@ -135,11 +203,6 @@ actor KokoroTTS {
     let attentionMask = MLXArray(swiftTextMaskInt).reshaped(textMask.shape)
     attentionMask.eval()
 
-    // Ensure model is initialized
-    guard let model else {
-      throw KokoroTTSError.modelNotInitialized
-    }
-
     let (bertDur, _) = model.bert(paddedInputIds, attentionMask: attentionMask)
     bertDur.eval()
 
@@ -147,8 +210,9 @@ actor KokoroTTS {
     dEn.eval()
 
     guard let voice else {
-      throw KokoroTTSError.modelNotInitialized
+      throw KokoroTTSError.voiceLoadFailed
     }
+
     // Voice shape is [510, 1, 256], index by phoneme length to get [1, 256]
     let voiceIdx = min(inputIds.count - 1, voice.shape[0] - 1)
     let refS = voice[voiceIdx]
@@ -289,95 +353,5 @@ actor KokoroTTS {
     }
 
     return audio.asArray(Float.self)
-  }
-
-  func generateAudio(voice: KokoroEngine.Voice, text: String, speed: Float = 1.0, chunkCallback: @escaping @Sendable ([Float]) -> Void) async throws {
-    try await ensureModelInitialized()
-
-    let sentences = SentenceTokenizer.splitIntoSentences(text: text)
-    if sentences.isEmpty {
-      throw KokoroTTSError.sentenceSplitError
-    }
-
-    self.voice = nil
-
-    for sentence in sentences {
-      let audio = try await generateAudioForSentence(voice: voice, text: sentence, speed: speed)
-      chunkCallback(audio)
-      MLX.GPU.clearCache()
-    }
-
-    // Reset model after completing a long text to free memory
-    if sentences.count > 5 {
-      resetModel()
-    }
-  }
-
-  func generateAudioStream(voice: KokoroEngine.Voice, text: String, speed: Float = 1.0) async throws -> AsyncThrowingStream<[Float], Error> {
-    try await ensureModelInitialized()
-
-    let sentences = SentenceTokenizer.splitIntoSentences(text: text)
-    if sentences.isEmpty {
-      throw KokoroTTSError.sentenceSplitError
-    }
-
-    self.voice = nil
-    let index = Atomic<Int>(0)
-
-    return AsyncThrowingStream {
-      let i = index.wrappingAdd(1, ordering: .relaxed).oldValue
-      guard i < sentences.count else { return nil }
-
-      let audio = try await self.generateAudioForSentence(voice: voice, text: sentences[i], speed: speed)
-      MLX.GPU.clearCache()
-      return audio
-    }
-  }
-
-  private func generateAudioForSentence(voice: KokoroEngine.Voice, text: String, speed: Float) async throws -> [Float] {
-    try await ensureModelInitialized()
-
-    if text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-      return [0.0]
-    }
-
-    // Load voice if it changed or if it was cleared
-    if chosenVoice != voice || self.voice == nil {
-      self.voice = try await VoiceLoader.loadVoice(
-        voice,
-        repoId: repoId,
-        progressHandler: progressHandler,
-      )
-      self.voice?.eval() // Force immediate evaluation
-
-      try kokoroTokenizer.setLanguage(for: voice)
-      chosenVoice = voice
-    }
-
-    do {
-      let phonemizedResult = try kokoroTokenizer.phonemize(text)
-
-      let inputIds = PhonemeTokenizer.tokenize(phonemizedText: phonemizedResult.phonemes)
-      guard inputIds.count <= Self.maxTokenCount else {
-        throw KokoroTTSError.tooManyTokens
-      }
-
-      // Continue with normal audio generation
-      return try processTokensToAudio(inputIds: inputIds, speed: speed)
-    } catch {
-      // Re-throw the error instead of silently returning a beep
-      // This allows proper error handling up the call stack
-      Log.tts.error("KokoroTTS: Error generating audio for sentence - \(error)")
-      throw error
-    }
-  }
-
-  // Common processing method to convert tokens to audio - used by streaming methods
-  private func processTokensToAudio(inputIds: [Int], speed: Float) throws -> [Float] {
-    // Use the token processing method
-    try generateAudioForTokens(
-      inputIds: inputIds,
-      speed: speed,
-    )
   }
 }

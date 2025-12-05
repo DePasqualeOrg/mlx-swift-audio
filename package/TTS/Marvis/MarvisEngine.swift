@@ -1,62 +1,6 @@
 import Foundation
 import MLX
 
-/// Actor wrapper for MarvisOrchestrator that provides thread-safe generation
-actor MarvisTTS {
-  private var orchestrator: MarvisOrchestrator?
-
-  var isInitialized: Bool { orchestrator != nil }
-
-  func initialize(
-    modelRepoId: String,
-    progressHandler: @escaping @Sendable (Progress) -> Void,
-  ) async throws {
-    orchestrator = try await MarvisOrchestrator.fromPretrained(
-      repoId: modelRepoId,
-      progressHandler: progressHandler,
-    )
-  }
-
-  func generate(
-    text: String,
-    voice: MarvisEngine.Voice,
-    quality: MarvisEngine.QualityLevel,
-  ) throws -> MarvisOrchestrator.GenerationResult {
-    guard let orchestrator else { throw TTSError.modelNotLoaded }
-    return try orchestrator.generateAudio(text: text, voice: voice, quality: quality)
-  }
-
-  func generateStreaming(
-    text: String,
-    voice: MarvisEngine.Voice,
-    quality: MarvisEngine.QualityLevel,
-    interval: Double,
-  ) throws -> AsyncThrowingStream<MarvisOrchestrator.GenerationResult, Error> {
-    guard let orchestrator else { throw TTSError.modelNotLoaded }
-
-    return AsyncThrowingStream { continuation in
-      do {
-        try orchestrator.generateAudioStream(
-          text: text,
-          voice: voice,
-          quality: quality,
-          interval: interval,
-        ) { result in
-          continuation.yield(result)
-        }
-        continuation.finish()
-      } catch {
-        continuation.finish(throwing: error)
-      }
-    }
-  }
-
-  func cleanUp() throws {
-    try orchestrator?.cleanUpMemory()
-    orchestrator = nil
-  }
-}
-
 /// Marvis TTS engine - advanced conversational TTS with streaming support
 @Observable
 @MainActor
@@ -158,7 +102,7 @@ public final class MarvisEngine: TTSEngine, StreamingTTSEngine {
 
   public func load(progressHandler: (@Sendable (Progress) -> Void)?) async throws {
     // Check if we need to reload
-    if let marvisTTS, await marvisTTS.isInitialized, lastModelVariant == modelVariant {
+    if marvisTTS != nil, lastModelVariant == modelVariant {
       Log.tts.debug("MarvisEngine already loaded with same configuration")
       return
     }
@@ -170,13 +114,11 @@ public final class MarvisEngine: TTSEngine, StreamingTTSEngine {
     }
 
     do {
-      let tts = MarvisTTS()
-      try await tts.initialize(
-        modelRepoId: modelVariant.repoId,
+      marvisTTS = try await MarvisTTS.load(
+        repoId: modelVariant.repoId,
         progressHandler: progressHandler ?? { _ in },
       )
 
-      marvisTTS = tts
       lastModelVariant = modelVariant
       isLoaded = true
       Log.model.info("Marvis TTS model loaded successfully")
@@ -348,7 +290,7 @@ public final class MarvisEngine: TTSEngine, StreamingTTSEngine {
         var isFirst = true
 
         do {
-          let stream = try await marvisTTS.generateStreaming(
+          let stream = await marvisTTS.generateStreaming(
             text: trimmedText,
             voice: voice,
             quality: quality,

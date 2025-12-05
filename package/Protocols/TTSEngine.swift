@@ -126,3 +126,39 @@ public struct AudioChunk: Sendable {
     self.processingTime = processingTime
   }
 }
+
+/// Result from TTS audio generation
+public struct TTSGenerationResult: Sendable {
+  /// Raw audio samples
+  public let audio: [Float]
+
+  /// Sample rate in Hz (e.g., 24000)
+  public let sampleRate: Int
+
+  /// Duration of the generated audio in seconds
+  public let duration: TimeInterval
+
+  /// Time taken to generate the audio in seconds
+  public let processingTime: TimeInterval
+
+  /// Real-time factor (duration / processingTime)
+  /// Values > 1 mean faster than real-time
+  public var realTimeFactor: Double {
+    processingTime > 0 ? duration / processingTime : 0
+  }
+
+  public init(audio: [Float], sampleRate: Int, duration: TimeInterval, processingTime: TimeInterval) {
+    self.audio = audio
+    self.sampleRate = sampleRate
+    self.duration = duration
+    self.processingTime = processingTime
+  }
+
+  /// Convenience initializer that computes duration from sample count
+  public init(audio: [Float], sampleRate: Int, processingTime: TimeInterval) {
+    self.audio = audio
+    self.sampleRate = sampleRate
+    duration = Double(audio.count) / Double(sampleRate)
+    self.processingTime = processingTime
+  }
+}

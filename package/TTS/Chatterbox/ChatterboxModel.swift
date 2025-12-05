@@ -121,7 +121,15 @@ struct ChatterboxConditionals: @unchecked Sendable {
 /// - VoiceEncoder: Speaker embedding extractor
 /// - S3Tokenizer: Speech tokenizer for reference audio
 ///
-/// Note: This is a Module subclass for weight loading. Use `ChatterboxTTS` (actor) for thread-safe access.
+/// This class is a `Module` subclass because Chatterbox uses a single weight file that contains
+/// parameters for multiple sub-models. The MLX `Module` system's `@ModuleInfo` property wrappers
+/// enable hierarchical weight distribution - when `update(parameters:)` is called on this model,
+/// weights are automatically routed to the appropriate sub-modules based on their key paths.
+///
+/// Other TTS engines (Marvis, Orpheus, Kokoro, OuteTTS) don't need this pattern because they load
+/// separate weight files directly into each component model.
+///
+/// Note: Use `ChatterboxTTS` (actor) for thread-safe access.
 class ChatterboxModel: Module {
   /// Default Hugging Face repository for Chatterbox TTS (4-bit quantized)
   static let defaultRepoId = "mlx-community/Chatterbox-TTS-4bit"

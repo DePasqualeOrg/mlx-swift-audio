@@ -173,8 +173,8 @@ actor OrpheusTTS {
     return OrpheusTTS(model: model, snacDecoder: snacDecoder, tokenizer: tokenizer)
   }
 
-  func generateAudio(voice: OrpheusEngine.Voice, text: String, temperature: Float = 0.6, topP: Float = 0.8) throws -> [Float] {
-    let totalGenerationStart = CFAbsoluteTimeGetCurrent()
+  func generate(text: String, voice: OrpheusEngine.Voice, temperature: Float = 0.6, topP: Float = 0.8) throws -> TTSGenerationResult {
+    let startTime = CFAbsoluteTimeGetCurrent()
 
     // Prepare input with voice prefix
     let prompt = "\(voice.rawValue): \(text)"
@@ -308,12 +308,15 @@ actor OrpheusTTS {
       snacDecoder.decode(codes: codeLists)
     }
 
-    let totalGenerationEnd = CFAbsoluteTimeGetCurrent()
-    let totalDuration = (totalGenerationEnd - totalGenerationStart) * 1000
-    Log.perf.info("🏁 [PROFILE] Total audio generation: \(totalDuration.formatted(decimals: 2)) ms")
-
     waveform.eval()
-    return waveform.asArray(Float.self)
+    let processingTime = CFAbsoluteTimeGetCurrent() - startTime
+    Log.perf.info("🏁 [PROFILE] Total audio generation: \((processingTime * 1000).formatted(decimals: 2)) ms")
+
+    return TTSGenerationResult(
+      audio: waveform.asArray(Float.self),
+      sampleRate: Self.sampleRate,
+      processingTime: processingTime,
+    )
   }
 
   private func sampleNextToken(
