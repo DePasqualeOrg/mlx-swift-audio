@@ -2,7 +2,9 @@ import Foundation
 
 /// Available TTS providers
 public enum TTSProvider: String, CaseIterable, Identifiable, Sendable {
-  case kokoro
+  #if !MLXAUDIO_EXCLUDE_KOKORO
+    case kokoro
+  #endif
   case orpheus
   case marvis
   case outetts
@@ -15,17 +17,23 @@ public enum TTSProvider: String, CaseIterable, Identifiable, Sendable {
   /// Human-readable name for UI display
   public var displayName: String {
     switch self {
+      #if !MLXAUDIO_EXCLUDE_KOKORO
+        case .kokoro: "Kokoro"
+      #endif
+      case .orpheus: "Orpheus"
+      case .marvis: "Marvis"
       case .outetts: "OuteTTS"
       case .chatterbox: "Chatterbox"
-      default: rawValue.capitalized
     }
   }
 
   /// Description of the provider's capabilities
   public var description: String {
     switch self {
-      case .kokoro:
-        "Fast, lightweight TTS with many voices"
+      #if !MLXAUDIO_EXCLUDE_KOKORO
+        case .kokoro:
+          "Fast, lightweight TTS with many voices"
+      #endif
       case .orpheus:
         "High quality with emotional expressions"
       case .marvis:
@@ -40,8 +48,10 @@ public enum TTSProvider: String, CaseIterable, Identifiable, Sendable {
   /// Status message shown in the UI (warnings, tips, etc.)
   public var statusMessage: String {
     switch self {
-      case .kokoro:
-        ""
+      #if !MLXAUDIO_EXCLUDE_KOKORO
+        case .kokoro:
+          ""
+      #endif
       case .orpheus:
         "Supports expressions: <laugh>, <chuckle>, <sigh>, <cough>, <sniffle>, <groan>, <yawn>, <gasp>"
       case .marvis:
@@ -58,7 +68,9 @@ public enum TTSProvider: String, CaseIterable, Identifiable, Sendable {
   /// Sample rate for this provider's audio output (Hz)
   public var sampleRate: Int {
     switch self {
-      case .kokoro: 24000
+      #if !MLXAUDIO_EXCLUDE_KOKORO
+        case .kokoro: 24000
+      #endif
       case .orpheus: 24000
       case .marvis: 24000
       case .outetts: 24000
@@ -70,7 +82,11 @@ public enum TTSProvider: String, CaseIterable, Identifiable, Sendable {
 
   /// Whether this provider supports speed adjustment
   public var supportsSpeed: Bool {
-    self == .kokoro
+    #if !MLXAUDIO_EXCLUDE_KOKORO
+      self == .kokoro
+    #else
+      false
+    #endif
   }
 
   /// Whether this provider supports emotional expressions
@@ -92,8 +108,10 @@ public enum TTSProvider: String, CaseIterable, Identifiable, Sendable {
   /// Default voice ID for this provider
   public var defaultVoiceID: String {
     switch self {
-      case .kokoro:
-        "af_heart"
+      #if !MLXAUDIO_EXCLUDE_KOKORO
+        case .kokoro:
+          "af_heart"
+      #endif
       case .orpheus:
         "dan"
       case .marvis:
@@ -108,8 +126,10 @@ public enum TTSProvider: String, CaseIterable, Identifiable, Sendable {
   /// All available voices for this provider (derived from engine Voice enums)
   public var availableVoices: [Voice] {
     switch self {
-      case .kokoro:
-        KokoroEngine.Voice.allVoices
+      #if !MLXAUDIO_EXCLUDE_KOKORO
+        case .kokoro:
+          KokoroEngine.Voice.allVoices
+      #endif
       case .orpheus:
         OrpheusEngine.Voice.allVoices
       case .marvis:
