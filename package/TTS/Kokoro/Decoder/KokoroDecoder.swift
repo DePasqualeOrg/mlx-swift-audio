@@ -75,8 +75,6 @@ class KokoroDecoder: Module {
   }
 
   func callAsFunction(asr: MLXArray, F0Curve: MLXArray, N: MLXArray, s: MLXArray) -> MLXArray {
-    Task { await BenchmarkTimer.shared.create(id: "Encode", parent: "Decoder") }
-
     let F0CurveSwapped = F0Curve.reshaped([F0Curve.shape[0], 1, F0Curve.shape[1]]).swappedAxes(1, 2)
     let F0 = F0Conv(F0CurveSwapped, conv: MLX.conv1d).swappedAxes(1, 2)
 
@@ -90,9 +88,6 @@ class KokoroDecoder: Module {
     var res = true
 
     x.eval()
-    Task { await BenchmarkTimer.shared.stop(id: "Encode") }
-
-    Task { await BenchmarkTimer.shared.create(id: "Blocks", parent: "Decoder") }
 
     for block in decode {
       if res {
@@ -106,7 +101,6 @@ class KokoroDecoder: Module {
     }
 
     x.eval()
-    Task { await BenchmarkTimer.shared.stop(id: "Blocks") }
 
     return generator(x, s, F0Curve)
   }

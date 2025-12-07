@@ -1,0 +1,29 @@
+# Periphery configuration for mlx-swift-audio
+# Run: periphery scan
+
+# Library project: retain all public declarations
+retain_public: true
+
+# Retain properties that are assigned but only read in specific contexts
+retain_assign_only_properties: true
+
+# Retain SwiftUI previews
+retain_swift_ui_previews: true
+
+# Retain Codable properties (used for model config loading from JSON)
+retain_codable_properties: true
+
+# Exclude generated/external code from reports
+report_exclude:
+  - "**/SourcePackages/**"
+  - "**/.build/**"
+
+# Retain all declarations in these files (ported model code with alternative implementations)
+retain_files:
+  - "**/Codec/DAC/**"
+  - "**/TTS/Chatterbox/**"
+  - "**/TTS/Kokoro/**"
+  - "**/TTS/Marvis/**"
+  - "**/TTS/Orpheus/**"
+  - "**/TTS/OuteTTS/**"
+  - "**/Audio/AudioSamplePlayer.swift"

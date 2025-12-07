@@ -6,7 +6,6 @@ enum AudioFileWriterError: LocalizedError {
   case formatCreationFailed
   case bufferCreationFailed
   case channelDataAccessFailed
-  case combinedBufferCreationFailed
 
   var errorDescription: String? {
     switch self {
@@ -16,8 +15,6 @@ enum AudioFileWriterError: LocalizedError {
         "Failed to create audio buffer"
       case .channelDataAccessFailed:
         "Failed to get channel data"
-      case .combinedBufferCreationFailed:
-        "Failed to create combined buffer"
     }
   }
 }
@@ -110,132 +107,5 @@ public enum AudioFileWriter {
     } catch {
       throw TTSError.fileIOError(underlying: error)
     }
-  }
-
-  /// Save multiple audio buffers to a single file
-  /// - Parameters:
-  ///   - buffers: Array of AVAudioPCMBuffer
-  ///   - directory: Target directory URL
-  ///   - filename: Base filename without extension
-  ///   - format: Output format
-  /// - Returns: URL of the saved file
-  static func save(
-    buffers: [AVAudioPCMBuffer],
-    to directory: URL? = nil,
-    filename: String,
-    format: AudioFileFormat = .wav,
-  ) throws -> URL {
-    guard !buffers.isEmpty else {
-      throw TTSError.invalidArgument("Cannot save empty buffer array")
-    }
-
-    guard let firstBuffer = buffers.first else {
-      throw TTSError.invalidArgument("No buffers provided")
-    }
-
-    let audioFormat = firstBuffer.format
-
-    // Calculate total frames
-    let totalFrames = buffers.reduce(0) { $0 + Int($1.frameLength) }
-
-    // Create combined buffer
-    guard let combinedBuffer = AVAudioPCMBuffer(
-      pcmFormat: audioFormat,
-      frameCapacity: AVAudioFrameCount(totalFrames),
-    ) else {
-      throw TTSError.fileIOError(underlying: AudioFileWriterError.combinedBufferCreationFailed)
-    }
-
-    combinedBuffer.frameLength = AVAudioFrameCount(totalFrames)
-
-    // Copy all buffers into combined buffer
-    var offset = 0
-    for buffer in buffers {
-      let frameCount = Int(buffer.frameLength)
-      guard let srcData = buffer.floatChannelData?[0],
-            let dstData = combinedBuffer.floatChannelData?[0]
-      else {
-        continue
-      }
-
-      for i in 0 ..< frameCount {
-        dstData[offset + i] = srcData[i]
-      }
-      offset += frameCount
-    }
-
-    // Determine output directory
-    let outputDirectory = directory ?? FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0]
-    let fileURL = outputDirectory.appendingPathComponent("\(filename).\(format.fileExtension)")
-
-    // Write to file
-    do {
-      let audioFile = try AVAudioFile(
-        forWriting: fileURL,
-        settings: audioFormat.settings,
-        commonFormat: format.commonFormat,
-        interleaved: false,
-      )
-      try audioFile.write(from: combinedBuffer)
-      Log.audio.debug("Combined audio saved to: \(fileURL.path)")
-      return fileURL
-    } catch {
-      throw TTSError.fileIOError(underlying: error)
-    }
-  }
-}
-
-// MARK: - Stream Writer
-
-/// Handles incremental writes for streaming audio
-final class AudioStreamWriter {
-  private var samples: [Float] = []
-  private let sampleRate: Int
-  private let directory: URL
-  private let filename: String
-  private let format: AudioFileFormat
-
-  init(
-    sampleRate: Int,
-    to directory: URL? = nil,
-    filename: String,
-    format: AudioFileFormat = .wav,
-  ) {
-    self.sampleRate = sampleRate
-    self.directory = directory ?? FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0]
-    self.filename = filename
-    self.format = format
-  }
-
-  /// Append samples to the stream
-  func append(samples newSamples: [Float]) {
-    samples.append(contentsOf: newSamples)
-  }
-
-  /// Finalize and save the accumulated audio
-  /// - Returns: URL of the saved file
-  func finalize() throws -> URL {
-    try AudioFileWriter.save(
-      samples: samples,
-      sampleRate: sampleRate,
-      to: directory,
-      filename: filename,
-      format: format,
-    )
-  }
-
-  /// Current sample count
-  var sampleCount: Int {
-    samples.count
-  }
-
-  /// Current duration in seconds
-  var duration: TimeInterval {
-    Double(samples.count) / Double(sampleRate)
-  }
-
-  /// Reset the stream writer
-  func reset() {
-    samples.removeAll(keepingCapacity: true)
   }
 }

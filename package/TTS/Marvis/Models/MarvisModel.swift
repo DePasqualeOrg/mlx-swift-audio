@@ -471,6 +471,7 @@ final class MarvisModel: Module {
     var currH = concatenated([lastH3, c0Embed], axis: 1) // [B, 2, dBackbone]
     var currSample = c0Sample // [B, 1]
 
+    // TODO: Use MLX.arange after next mlx-swift release (see MLXArray+Extensions.swift)
     let basePos = MLXArray.arange(2).reshaped([1, 2])
     var currPos = repeated(basePos, count: B, axis: 0) // [B, 2]
 
@@ -533,6 +534,7 @@ final class MarvisModel: Module {
     var textEmb = textEmbeddings(textIds) // [B, T, D]
     textEmb = expandedDimensions(textEmb, axis: -2) // [B, T, 1, D]
 
+    // TODO: Use MLX.arange after next mlx-swift release (see MLXArray+Extensions.swift)
     let cbIdx = MLXArray.arange(Cb) // [Cb]
     let cbOffsets = (cbIdx * MLXArray(Int32(args.audioVocabSize))).reshaped([1, 1, Cb])
     let shiftedAudioIds = audioIds + cbOffsets // [B, T, Cb]

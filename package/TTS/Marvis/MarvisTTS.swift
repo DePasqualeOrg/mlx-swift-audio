@@ -346,6 +346,7 @@ actor MarvisTTS {
     let promptMask = concatenated([sm], axis: 0).asType(Bool.self)
     let currTokens = expandedDimensions(promptTokens, axis: 0)
     let currMask = expandedDimensions(promptMask, axis: 0)
+    // TODO: Use MLX.arange after next mlx-swift release (see MLXArray+Extensions.swift)
     let currPos = expandedDimensions(MLXArray.arange(promptTokens.shape[0]), axis: 0)
     return (currTokens, currMask, currPos)
   }

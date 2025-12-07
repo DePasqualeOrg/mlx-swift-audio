@@ -205,19 +205,13 @@ class MLXSTFT {
   func inverse(magnitude: MLXArray, phase: MLXArray) -> MLXArray {
     var reconstructed: [MLXArray] = []
 
-//    let unwrapTimer = BenchmarkTimer.shared.create(id: "Unwrap", parent: "InverseSTFT")!
-//    let fftTimer = BenchmarkTimer.shared.create(id: "Istft", parent: "InverseSTFT")!
-
     for batchIdx in 0 ..< magnitude.shape[0] {
-//      unwrapTimer.startTimer()
       let phaseCont = unwrap(p: phase[batchIdx])
 
       // Combine magnitude and phase
       let stft = magnitude[batchIdx] * MLX.exp(MLXArray(real: 0, imaginary: 1) * phaseCont)
       stft.eval()
-//      unwrapTimer.stop()
 
-//      fftTimer.startTimer()
       // Inverse STFT
       let audio = mlxIstft(
         x: stft,
@@ -227,7 +221,6 @@ class MLXSTFT {
         center: true,
       )
       audio.eval()
-//      fftTimer.stop()
       reconstructed.append(audio)
     }
 
