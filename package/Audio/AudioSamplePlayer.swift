@@ -1,3 +1,4 @@
+import Accelerate
 @preconcurrency import AVFoundation
 import Foundation
 
@@ -206,11 +207,19 @@ public final class AudioSamplePlayer {
       return nil
     }
 
-    // Copy samples with volume boost and clipping prevention
+    let count = vDSP_Length(samples.count)
     let maxValue = TTSConstants.Audio.maxSampleValue
-    for i in 0 ..< samples.count {
-      let boosted = samples[i] * volumeBoost
-      channelData[0][i] = min(max(boosted, -maxValue), maxValue)
+
+    // Use vDSP for vectorized volume boost and clipping (equivalent to scipy/numpy operations)
+    samples.withUnsafeBufferPointer { samplesPtr in
+      // Apply volume boost: output = samples * volumeBoost
+      var boost = volumeBoost
+      vDSP_vsmul(samplesPtr.baseAddress!, 1, &boost, channelData[0], 1, count)
+
+      // Clip to [-maxValue, maxValue] range
+      var minVal = -maxValue
+      var maxVal = maxValue
+      vDSP_vclip(channelData[0], 1, &minVal, &maxVal, channelData[0], 1, count)
     }
 
     return buffer

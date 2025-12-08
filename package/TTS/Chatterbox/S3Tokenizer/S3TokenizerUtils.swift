@@ -205,7 +205,7 @@ func logMelSpectrogramChatterbox(
 
 // MARK: - Helper functions
 
-/// Create a Hanning window
+/// Create a Hanning window (symmetric)
 func hanningWindow(length: Int) -> MLXArray {
   if length == 1 {
     return MLXArray([1.0])

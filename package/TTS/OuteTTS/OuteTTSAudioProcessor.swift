@@ -89,19 +89,23 @@ func calculatePitch(
       }
     }
 
-    // Find peak in valid frequency range
+    // Find peak in valid frequency range using vDSP
     let minIdx = max(1, Int(Float(sampleRate) / maxFreq))
     let maxIdx = min(frameLength, Int(Float(sampleRate) / minFreq))
 
     if minIdx < maxIdx {
-      var peakIdx = minIdx
-      var peakVal = autocorr[minIdx]
-      for j in minIdx ..< maxIdx {
-        if autocorr[j] > peakVal {
-          peakVal = autocorr[j]
-          peakIdx = j
-        }
+      // Use vDSP_maxvi for vectorized peak finding (with pointer arithmetic to avoid copy)
+      var peakVal: Float = 0
+      var peakIdxUInt: vDSP_Length = 0
+      let searchLength = vDSP_Length(maxIdx - minIdx)
+      autocorr.withUnsafeBufferPointer { ptr in
+        vDSP_maxvi(
+          ptr.baseAddress! + minIdx, 1,
+          &peakVal, &peakIdxUInt,
+          searchLength,
+        )
       }
+      let peakIdx = minIdx + Int(peakIdxUInt)
 
       // Check voicing threshold
       let autocorr0 = autocorr[0] + 1e-8
@@ -238,12 +242,11 @@ class OuteTTSFeatures {
     var count = Int32(fftSize / 2)
     vvsqrtf(&magnitudes, magnitudes, &count)
 
-    // Compute frequencies
-    let freqResolution = Float(sampleRate) / Float(fftSize)
+    // Compute frequencies using vDSP ramp generation
     var frequencies = [Float](repeating: 0, count: fftSize / 2)
-    for i in 0 ..< (fftSize / 2) {
-      frequencies[i] = Float(i) * freqResolution
-    }
+    var start: Float = 0
+    var step = Float(sampleRate) / Float(fftSize)
+    vDSP_vramp(&start, &step, &frequencies, 1, vDSP_Length(fftSize / 2))
 
     // Compute weighted sum
     var weightedSum: Float = 0
