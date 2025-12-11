@@ -145,6 +145,8 @@ class ConditionalDecoder: Module {
   let nDownBlocks: Int
   let nMidBlocks: Int
   let nUpBlocks: Int
+  let staticChunkSize: Int
+  let numDecodingLeftChunks: Int
 
   @ModuleInfo(key: "time_embeddings") var timeEmbeddings: SinusoidalPosEmb
   @ModuleInfo(key: "time_mlp") var timeMlp: TimestepEmbedding
@@ -165,10 +167,14 @@ class ConditionalDecoder: Module {
     numMidBlocks: Int = 12,
     numHeads: Int = 8,
     actFn: String = "gelu",
+    staticChunkSize: Int = 50,
+    numDecodingLeftChunks: Int = 2
   ) {
     self.inChannels = inChannels
     self.outChannels = outChannels
     self.causal = causal
+    self.staticChunkSize = staticChunkSize
+    self.numDecodingLeftChunks = numDecodingLeftChunks
 
     // Time embeddings
     _timeEmbeddings.wrappedValue = SinusoidalPosEmb(dim: inChannels)
@@ -270,6 +276,7 @@ class ConditionalDecoder: Module {
     t: MLXArray,
     spks: MLXArray? = nil,
     cond: MLXArray? = nil,
+    streaming: Bool = false
   ) -> MLXArray {
     // Time embedding
     var tEmb = timeEmbeddings(t)
@@ -288,6 +295,31 @@ class ConditionalDecoder: Module {
       h = MLX.concatenated([h, c], axis: 1)
     }
 
+    // Helper to compute attention bias from mask
+    // streaming=false: full context attention (staticChunkSize=0)
+    // streaming=true: chunk-based causal attention (staticChunkSize=self.staticChunkSize)
+    func computeAttentionBias(_ hT: MLXArray, _ maskDown: MLXArray) -> MLXArray {
+      // Use static_chunk_size when streaming, otherwise full context (0)
+      let effectiveChunkSize = streaming ? staticChunkSize : 0
+
+      var attnMask = addOptionalChunkMask(
+        xs: hT,
+        masks: maskDown.asType(.bool),
+        useDynamicChunk: false,
+        useDynamicLeftChunk: false,
+        decodingChunkSize: 0,
+        staticChunkSize: effectiveChunkSize,
+        numDecodingLeftChunks: streaming ? numDecodingLeftChunks : -1
+      )
+      // Broadcast along query dimension for proper attention
+      attnMask = MLX.broadcast(attnMask, to: [attnMask.shape[0], hT.shape[1], attnMask.shape[2]])
+      // Convert boolean mask to additive bias
+      var bias = maskToBias(attnMask, dtype: hT.dtype)
+      // Add heads dimension for scaledDotProductAttention: (B, T, T) -> (B, 1, T, T)
+      bias = bias.expandedDimensions(axis: 1)
+      return bias
+    }
+
     // Down blocks
     var hiddens: [MLXArray] = []
     var masks: [MLXArray] = [mask]
@@ -295,10 +327,11 @@ class ConditionalDecoder: Module {
       let maskDown = masks.last!
       h = downBlock.resnet(h, mask: maskDown, timeEmb: tEmb)
 
-      // Transformer blocks
+      // Transformer blocks with attention mask
       var hT = h.swappedAxes(1, 2) // (B, C, T) -> (B, T, C)
+      let attnBias = computeAttentionBias(hT, maskDown)
       for transformer in downBlock.transformers {
-        hT = transformer(hT, attentionMask: nil, timestep: tEmb)
+        hT = transformer(hT, attentionMask: attnBias, timestep: tEmb)
       }
       h = hT.swappedAxes(1, 2) // (B, T, C) -> (B, C, T)
 
@@ -322,8 +355,9 @@ class ConditionalDecoder: Module {
       h = midBlock.resnet(h, mask: maskMid, timeEmb: tEmb)
 
       var hT = h.swappedAxes(1, 2)
+      let attnBias = computeAttentionBias(hT, maskMid)
       for transformer in midBlock.transformers {
-        hT = transformer(hT, attentionMask: nil, timestep: tEmb)
+        hT = transformer(hT, attentionMask: attnBias, timestep: tEmb)
       }
       h = hT.swappedAxes(1, 2)
     }
@@ -338,8 +372,9 @@ class ConditionalDecoder: Module {
       h = upBlock.resnet(h, mask: maskUp, timeEmb: tEmb)
 
       var hT = h.swappedAxes(1, 2)
+      let attnBias = computeAttentionBias(hT, maskUp)
       for transformer in upBlock.transformers {
-        hT = transformer(hT, attentionMask: nil, timestep: tEmb)
+        hT = transformer(hT, attentionMask: attnBias, timestep: tEmb)
       }
       h = hT.swappedAxes(1, 2)
 

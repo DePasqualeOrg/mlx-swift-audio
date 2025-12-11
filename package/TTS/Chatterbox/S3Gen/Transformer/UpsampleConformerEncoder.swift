@@ -384,11 +384,20 @@ class UpsampleConformerEncoder: Module {
   }
 
   /// Embed positions in tensor
+  /// - Parameters:
+  ///   - xs: Input tensor (B, T, D)
+  ///   - xsLens: Input lengths (B,)
+  ///   - decodingChunkSize: Chunk size for decoding (0=random, <0=full, >0=fixed)
+  ///   - numDecodingLeftChunks: Number of left chunks (<0=all)
+  ///   - streaming: Whether to use streaming (chunk-based) attention.
+  ///     When False (default), uses full context attention (effective_chunk_size=0).
+  ///     When True, uses static_chunk_size for causal masking.
   func callAsFunction(
     _ xs: MLXArray,
     xsLens: MLXArray,
     decodingChunkSize: Int = 0,
     numDecodingLeftChunks: Int = -1,
+    streaming: Bool = false
   ) -> (MLXArray, MLXArray) {
     var xsOut = xs
     var xsLensOut = xsLens
@@ -401,13 +410,16 @@ class UpsampleConformerEncoder: Module {
     (xsOut, posEmb, masks) = embed(xsOut, xMask: masks, offset: 0)
     let maskPad = masks
 
+    // Use static_chunk_size when streaming, otherwise full context (0)
+    let effectiveChunkSize = streaming ? staticChunkSize : 0
+
     var chunkMasks = addOptionalChunkMask(
       xs: xsOut,
       masks: masks,
       useDynamicChunk: useDynamicChunk,
       useDynamicLeftChunk: useDynamicLeftChunk,
       decodingChunkSize: decodingChunkSize,
-      staticChunkSize: staticChunkSize,
+      staticChunkSize: effectiveChunkSize,
       numDecodingLeftChunks: numDecodingLeftChunks,
     )
 
@@ -427,13 +439,16 @@ class UpsampleConformerEncoder: Module {
     (xsOut, posEmb, masks) = upEmbed(xsOut, xMask: masks, offset: 0)
     let maskPadUp = masks
 
+    // Scale effective chunk size by upsample stride for upsampled encoder
+    let effectiveUpChunkSize = effectiveChunkSize * upLayer.stride
+
     chunkMasks = addOptionalChunkMask(
       xs: xsOut,
       masks: masks,
       useDynamicChunk: useDynamicChunk,
       useDynamicLeftChunk: useDynamicLeftChunk,
       decodingChunkSize: decodingChunkSize,
-      staticChunkSize: staticChunkSize * upLayer.stride,
+      staticChunkSize: effectiveUpChunkSize,
       numDecodingLeftChunks: numDecodingLeftChunks,
     )
 
