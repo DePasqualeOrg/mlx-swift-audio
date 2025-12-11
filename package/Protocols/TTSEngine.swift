@@ -99,6 +99,9 @@ public enum TTS {
 
   /// Chatterbox: reference audio, emotion control
   public static func chatterbox() -> ChatterboxEngine { ChatterboxEngine() }
+
+  /// CosyVoice2: voice matching with zero-shot and cross-lingual modes
+  public static func cosyVoice2() -> CosyVoice2Engine { CosyVoice2Engine() }
 }
 
 /// Describes how an engine streams audio output

@@ -18,6 +18,8 @@ struct VoicePickerView: View {
         EmptyView()
       case .chatterbox:
         EmptyView()
+      case .cosyVoice2:
+        EmptyView()
     }
   }
 }

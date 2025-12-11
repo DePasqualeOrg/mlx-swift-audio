@@ -3,6 +3,7 @@
 **This package is in early development. Expect breaking changes.**
 
 - Text to speech
+  - [CosyVoice2](https://github.com/FunAudioLLM/CosyVoice)
   - [Chatterbox](https://github.com/resemble-ai/chatterbox)
   - [OuteTTS](https://github.com/edwko/OuteTTS)
   - [Kokoro](https://github.com/hexgrad/kokoro)
@@ -22,6 +23,18 @@ In Xcode, go to File > Add Package Dependencies and enter `https://github.com/De
 
 ```swift
 import MLXAudio
+
+// CosyVoice2 - voice matching with zero-shot and cross-lingual modes
+let cosyVoice = TTS.cosyVoice2()
+try await cosyVoice.load()
+let speaker = try await cosyVoice.prepareSpeaker(from: audioFileURL)
+try await cosyVoice.say("Speaking with your voice.", speaker: speaker)
+
+// With style instructions
+try await cosyVoice.say("This is exciting news!", speaker: speaker, instruction: "Speak with enthusiasm")
+
+// Voice conversion - transform audio to sound like the speaker
+let converted = try await cosyVoice.convertVoice(from: sourceAudioURL, to: speaker)
 
 // Chatterbox - custom voices from reference audio and emotion control
 let chatterbox = TTS.chatterbox()

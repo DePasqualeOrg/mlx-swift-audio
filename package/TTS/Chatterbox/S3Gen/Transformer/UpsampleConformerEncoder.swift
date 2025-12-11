@@ -195,6 +195,8 @@ class UpsampleConformerEncoder: Module {
   let staticChunkSize: Int
   let useDynamicChunk: Bool
   let useDynamicLeftChunk: Bool
+  let numUpBlocks: Int
+  let upsampleStride: Int
 
   @ModuleInfo(key: "embed") var embed: LinearNoSubsampling
   @ModuleInfo(key: "after_norm") var afterNorm: LayerNorm
@@ -210,6 +212,7 @@ class UpsampleConformerEncoder: Module {
     attentionHeads: Int = 8,
     linearUnits: Int = 2048,
     numBlocks: Int = 6,
+    numUpBlocks: Int = 4,
     dropoutRate: Float = 0.1,
     positionalDropoutRate: Float = 0.1,
     attentionDropoutRate: Float = 0.1,
@@ -228,6 +231,8 @@ class UpsampleConformerEncoder: Module {
     causal: Bool = false,
     cnnModuleNorm: String = "batch_norm",
     keyBias: Bool = true,
+    preLookaheadLen: Int = 3,
+    upsampleStride: Int = 2
   ) {
     precondition(inputLayer == "linear", "Only linear input layer supported")
 
@@ -236,6 +241,8 @@ class UpsampleConformerEncoder: Module {
     self.staticChunkSize = staticChunkSize
     self.useDynamicChunk = useDynamicChunk
     self.useDynamicLeftChunk = useDynamicLeftChunk
+    self.numUpBlocks = numUpBlocks
+    self.upsampleStride = upsampleStride
 
     // Input embedding layer
     _embed.wrappedValue = LinearNoSubsampling(
@@ -250,8 +257,8 @@ class UpsampleConformerEncoder: Module {
     // Activation function
     let activation: UnaryLayer = SiLU()
 
-    // Pre-lookahead layer
-    _preLookaheadLayer.wrappedValue = PreLookaheadLayer(channels: 512, preLookaheadLen: 3)
+    // Pre-lookahead layer (use outputSize instead of hardcoded 512)
+    _preLookaheadLayer.wrappedValue = PreLookaheadLayer(channels: outputSize, preLookaheadLen: preLookaheadLen)
 
     // Main encoder layers
     var encoderLayers: [ConformerEncoderLayer] = []
@@ -310,8 +317,8 @@ class UpsampleConformerEncoder: Module {
     }
     _encoders.wrappedValue = encoderLayers
 
-    // Upsampling layer
-    _upLayer.wrappedValue = Upsample1D(channels: 512, outChannels: 512, stride: 2)
+    // Upsampling layer (use outputSize and upsampleStride instead of hardcoded values)
+    _upLayer.wrappedValue = Upsample1D(channels: outputSize, outChannels: outputSize, stride: upsampleStride)
 
     // Upsampling embedding layer
     _upEmbed.wrappedValue = LinearNoSubsampling(
@@ -321,9 +328,9 @@ class UpsampleConformerEncoder: Module {
       posEncClass: RelPositionalEncoding(dModel: outputSize, dropoutRate: positionalDropoutRate),
     )
 
-    // Upsampling encoder layers
+    // Upsampling encoder layers (use numUpBlocks instead of hardcoded 4)
     var upEncoderLayers: [ConformerEncoderLayer] = []
-    for _ in 0 ..< 4 {
+    for _ in 0 ..< numUpBlocks {
       let selfAttn: Module = if selfattentionLayerType == "rel_selfattn" {
         RelPositionMultiHeadedAttention(
           nHead: attentionHeads,
@@ -384,11 +391,20 @@ class UpsampleConformerEncoder: Module {
   }
 
   /// Embed positions in tensor
+  /// - Parameters:
+  ///   - xs: Input tensor (B, T, D)
+  ///   - xsLens: Input lengths (B,)
+  ///   - decodingChunkSize: Chunk size for decoding (0=random, <0=full, >0=fixed)
+  ///   - numDecodingLeftChunks: Number of left chunks (<0=all)
+  ///   - streaming: Whether to use streaming (chunk-based) attention.
+  ///     When False (default), uses full context attention (effective_chunk_size=0).
+  ///     When True, uses static_chunk_size for causal masking.
   func callAsFunction(
     _ xs: MLXArray,
     xsLens: MLXArray,
     decodingChunkSize: Int = 0,
     numDecodingLeftChunks: Int = -1,
+    streaming: Bool = false
   ) -> (MLXArray, MLXArray) {
     var xsOut = xs
     var xsLensOut = xsLens
@@ -401,13 +417,16 @@ class UpsampleConformerEncoder: Module {
     (xsOut, posEmb, masks) = embed(xsOut, xMask: masks, offset: 0)
     let maskPad = masks
 
+    // Use static_chunk_size when streaming, otherwise full context (0)
+    let effectiveChunkSize = streaming ? staticChunkSize : 0
+
     var chunkMasks = addOptionalChunkMask(
       xs: xsOut,
       masks: masks,
       useDynamicChunk: useDynamicChunk,
       useDynamicLeftChunk: useDynamicLeftChunk,
       decodingChunkSize: decodingChunkSize,
-      staticChunkSize: staticChunkSize,
+      staticChunkSize: effectiveChunkSize,
       numDecodingLeftChunks: numDecodingLeftChunks,
     )
 
@@ -427,13 +446,16 @@ class UpsampleConformerEncoder: Module {
     (xsOut, posEmb, masks) = upEmbed(xsOut, xMask: masks, offset: 0)
     let maskPadUp = masks
 
+    // Scale effective chunk size by upsample stride for upsampled encoder
+    let effectiveUpChunkSize = effectiveChunkSize * upLayer.stride
+
     chunkMasks = addOptionalChunkMask(
       xs: xsOut,
       masks: masks,
       useDynamicChunk: useDynamicChunk,
       useDynamicLeftChunk: useDynamicLeftChunk,
       decodingChunkSize: decodingChunkSize,
-      staticChunkSize: staticChunkSize * upLayer.stride,
+      staticChunkSize: effectiveUpChunkSize,
       numDecodingLeftChunks: numDecodingLeftChunks,
     )
 

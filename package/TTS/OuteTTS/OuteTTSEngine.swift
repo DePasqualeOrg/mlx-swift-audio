@@ -223,7 +223,7 @@ public final class OuteTTSEngine: TTSEngine {
 
   /// Create a speaker profile from an audio file with automatic transcription
   /// - Parameter url: URL to the audio file (local or remote)
-  /// - Returns: A speaker profile that can be used for voice cloning
+  /// - Returns: A speaker profile that can be used for voice synthesis
   public func createSpeakerProfile(from url: URL) async throws -> OuteTTSSpeakerProfile {
     if !isLoaded {
       try await load()

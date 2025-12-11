@@ -520,7 +520,7 @@ class ChatterboxModel: Module {
   ///
   /// - Parameters:
   ///   - text: Input text to synthesize
-  ///   - audioPrompt: Reference audio for voice cloning
+  ///   - audioPrompt: Reference audio for voice matching
   ///   - audioPromptSr: Sample rate of audio prompt
   ///   - conds: Pre-computed conditionals (optional)
   ///   - exaggeration: Emotion exaggeration factor (0-1)

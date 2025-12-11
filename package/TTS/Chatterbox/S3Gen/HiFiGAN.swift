@@ -48,7 +48,19 @@ class Snake: Module {
     }
 
     // Snake activation: x + (1/α) * sin²(αx)
-    return x + (1.0 / (a + noDivByZero)) * MLX.pow(MLX.sin(x * a), 2)
+    // For fp16 safety, clamp |alpha| to prevent overflow when |1/alpha| > 65504
+    // min_alpha = 1e-4 means 1/min_alpha = 10000, safe for fp16
+    let minAlpha: Float = 1e-4
+    let alphaSign = MLX.sign(a)
+    let alphaAbs = MLX.abs(a)
+
+    // Clamp magnitude while preserving sign
+    var alphaClamped = alphaSign * MLX.maximum(alphaAbs, MLXArray(minAlpha))
+
+    // Handle case where alpha is extremely close to zero (sign might be 0)
+    alphaClamped = MLX.where(alphaAbs .< noDivByZero, MLXArray(minAlpha), alphaClamped)
+
+    return x + (1.0 / alphaClamped) * MLX.pow(MLX.sin(x * a), 2)
   }
 }
 
@@ -240,10 +252,15 @@ class SourceModuleHnNSF: Module {
 func stftHiFiGAN(x: MLXArray, nFft: Int, hopLength: Int, window: MLXArray) -> (MLXArray, MLXArray) {
   let shape = x.shape
   let B = shape[0]
+  let T = shape[1]
 
-  // Pad signal
+  // Reflect padding to match PyTorch's torch.stft behavior
+  // Left pad: reverse of x[:, 1:pad_length+1]
+  // Right pad: reverse of x[:, -(pad_length+1):-1]
   let padLength = nFft / 2
-  let xPadded = MLX.padded(x, widths: [IntOrPair(0), IntOrPair((padLength, padLength))])
+  let leftPad = reverseAlongAxis(x[0..., 1 ..< (padLength + 1)], axis: 1)
+  let rightPad = reverseAlongAxis(x[0..., (T - padLength - 1) ..< (T - 1)], axis: 1)
+  let xPadded = MLX.concatenated([leftPad, x, rightPad], axis: 1)
 
   // Calculate number of frames
   let numFrames = (xPadded.shape[1] - nFft) / hopLength + 1

@@ -19,16 +19,17 @@ class DiffusersAttention: Module {
   @ModuleInfo(key: "value_proj") var valueProj: Linear
   @ModuleInfo(key: "out_proj") var outProj: Linear
 
-  init(queryDim: Int, heads: Int = 8, dimHead: Int = 64, bias: Bool = false) {
+  init(queryDim: Int, heads: Int = 8, dimHead: Int = 64, qkvBias: Bool = false, outBias: Bool = true) {
     self.heads = heads
     self.dimHead = dimHead
     innerDim = heads * dimHead
     scale = pow(Float(dimHead), -0.5)
 
-    _queryProj.wrappedValue = Linear(queryDim, innerDim, bias: bias)
-    _keyProj.wrappedValue = Linear(queryDim, innerDim, bias: bias)
-    _valueProj.wrappedValue = Linear(queryDim, innerDim, bias: bias)
-    _outProj.wrappedValue = Linear(innerDim, queryDim, bias: bias)
+    // CosyVoice2 has no bias on q/k/v but has bias on out_proj
+    _queryProj.wrappedValue = Linear(queryDim, innerDim, bias: qkvBias)
+    _keyProj.wrappedValue = Linear(queryDim, innerDim, bias: qkvBias)
+    _valueProj.wrappedValue = Linear(queryDim, innerDim, bias: qkvBias)
+    _outProj.wrappedValue = Linear(innerDim, queryDim, bias: outBias)
   }
 
   func callAsFunction(_ hiddenStates: MLXArray, attentionMask: MLXArray? = nil) -> MLXArray {
@@ -117,7 +118,8 @@ class BasicTransformerBlock: Module {
       queryDim: dim,
       heads: numAttentionHeads,
       dimHead: attentionHeadDim,
-      bias: false,
+      qkvBias: false,
+      outBias: true
     )
     _ff.wrappedValue = FeedForward(dim: dim, innerDim: dim * 4)
   }

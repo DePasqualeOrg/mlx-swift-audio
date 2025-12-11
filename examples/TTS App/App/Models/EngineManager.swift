@@ -14,11 +14,12 @@ final class EngineManager {
   private(set) var marvisEngine = MarvisEngine()
   private(set) var outeTTSEngine = OuteTTSEngine()
   private(set) var chatterboxEngine = ChatterboxEngine()
+  private(set) var cosyVoice2Engine = CosyVoice2Engine()
 
   // MARK: - State
 
   /// Currently selected provider
-  private(set) var selectedProvider: TTSProvider = .kokoro
+  private(set) var selectedProvider: TTSProvider = .cosyVoice2
 
   /// Whether a model is currently being loaded
   private(set) var isLoading: Bool = false
@@ -45,6 +46,11 @@ final class EngineManager {
   /// Speaker profile for OuteTTS (nil uses bundled default)
   var outeTTSSpeaker: OuteTTSSpeakerProfile?
 
+  // MARK: - CosyVoice2 Speaker
+
+  /// Prepared speaker for CosyVoice2 (enables fast speaker switching)
+  var cosyVoice2Speaker: CosyVoice2Speaker?
+
   // MARK: - Computed Properties
 
   var currentEngine: any TTSEngine {
@@ -54,6 +60,7 @@ final class EngineManager {
       case .marvis: marvisEngine
       case .outetts: outeTTSEngine
       case .chatterbox: chatterboxEngine
+      case .cosyVoice2: cosyVoice2Engine
     }
   }
 
@@ -65,7 +72,7 @@ final class EngineManager {
 
   // MARK: - Initialization
 
-  init(initialProvider: TTSProvider = .kokoro) {
+  init(initialProvider: TTSProvider = .cosyVoice2) {
     selectedProvider = initialProvider
   }
 
@@ -112,6 +119,11 @@ final class EngineManager {
         chatterboxReferenceAudio = try await chatterboxEngine.prepareDefaultReferenceAudio()
       }
 
+      // CosyVoice2-specific: load default speaker if needed
+      if selectedProvider == .cosyVoice2, cosyVoice2Speaker == nil {
+        cosyVoice2Speaker = try await cosyVoice2Engine.prepareDefaultSpeaker()
+      }
+
       isLoading = false
       loadingProgress = 1.0
     } catch {
@@ -143,6 +155,13 @@ final class EngineManager {
           return try await outeTTSEngine.generate(text, speaker: outeTTSSpeaker)
         case .chatterbox:
           return try await chatterboxEngine.generate(text, referenceAudio: chatterboxReferenceAudio)
+        case .cosyVoice2:
+          // Handle voice conversion mode specially
+          if cosyVoice2Engine.generationMode == .voiceConversion {
+            return try await cosyVoice2Engine.generateVoiceConversion(speaker: cosyVoice2Speaker)
+          } else {
+            return try await cosyVoice2Engine.generate(text, speaker: cosyVoice2Speaker)
+          }
       }
     } catch is CancellationError {
       throw CancellationError()
@@ -166,6 +185,8 @@ final class EngineManager {
         outeTTSEngine.generateStreaming(text, speaker: outeTTSSpeaker)
       case .chatterbox:
         chatterboxEngine.generateStreaming(text, referenceAudio: chatterboxReferenceAudio)
+      case .cosyVoice2:
+        cosyVoice2Engine.generateStreaming(text, speaker: cosyVoice2Speaker)
     }
   }
 
@@ -185,6 +206,8 @@ final class EngineManager {
           return try await outeTTSEngine.sayStreaming(text, speaker: outeTTSSpeaker)
         case .chatterbox:
           return try await chatterboxEngine.sayStreaming(text, referenceAudio: chatterboxReferenceAudio)
+        case .cosyVoice2:
+          return try await cosyVoice2Engine.sayStreaming(text, speaker: cosyVoice2Speaker)
       }
     } catch is CancellationError {
       throw CancellationError()

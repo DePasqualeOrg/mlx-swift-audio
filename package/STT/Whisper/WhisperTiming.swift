@@ -198,8 +198,13 @@ func medianFilterAttention(
   // Process rows in parallel (each row is independent)
   weights.withUnsafeBufferPointer { weightsPtr in
     result.withUnsafeMutableBufferPointer { resultPtr in
-      let weightsBase = weightsPtr.baseAddress!
-      let resultBase = resultPtr.baseAddress!
+      // Using nonisolated(unsafe) is appropriate here because:
+      // 1. Performance-critical: tight loop processing audio data benefits from pointer arithmetic
+      // 2. Provably safe: each iteration accesses non-overlapping memory (different rows)
+      // 3. Synchronous: pointers don't escape; operation completes before buffer scope ends
+      // 4. DispatchQueue.concurrentPerform is more efficient than withTaskGroup for CPU-bound work
+      nonisolated(unsafe) let weightsBase = weightsPtr.baseAddress!
+      nonisolated(unsafe) let resultBase = resultPtr.baseAddress!
       DispatchQueue.concurrentPerform(iterations: totalRows) { rowIdx in
         let rowStart = rowIdx * frames
         let rowPtr = weightsBase + rowStart

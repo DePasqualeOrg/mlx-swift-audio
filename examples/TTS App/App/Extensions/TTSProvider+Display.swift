@@ -14,6 +14,8 @@ extension TTSProvider {
         "TTS with speaker profiles"
       case .chatterbox:
         "TTS with reference audio support"
+      case .cosyVoice2:
+        "Voice matching with zero-shot and cross-lingual modes"
     }
   }
 
@@ -25,11 +27,13 @@ extension TTSProvider {
       case .orpheus:
         "Supports expressions: <laugh>, <chuckle>, <sigh>, <cough>, <sniffle>, <groan>, <yawn>, <gasp>"
       case .marvis:
-        "Marvis: Advanced conversational TTS with streaming support.\n\nNote: Downloads model weights on first use."
+        "Marvis: Advanced conversational TTS with streaming support."
       case .outetts:
         "OuteTTS: Supports custom speaker profiles."
       case .chatterbox:
-        "Chatterbox: TTS with reference audio support.\n\nNote: Downloads model weights on first use."
+        "Chatterbox: TTS with reference audio support."
+      case .cosyVoice2:
+        "CosyVoice2: Voice matching with 4 inference modes."
     }
   }
 }
