@@ -1,6 +1,5 @@
 import Foundation
 import MLX
-import MLXFFT
 
 /// Reflect pad a 2D array (B, T) along axis 1
 private func reflectPad2D(_ x: MLXArray, padAmount: Int) -> MLXArray {

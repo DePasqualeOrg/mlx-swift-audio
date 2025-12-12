@@ -1,6 +1,5 @@
 import Foundation
 import MLX
-import MLXFFT
 import MLXNN
 
 /// Make mask tensor containing indices of non-padded part.
@@ -228,6 +227,13 @@ func stft(
 ) -> MLXArray {
   var xArray = x
 
+  // Pad window to nFft if needed (matches Python behavior)
+  var w = window
+  if w.shape[0] < nFft {
+    let padSize = nFft - w.shape[0]
+    w = MLX.concatenated([w, MLXArray.zeros([padSize])])
+  }
+
   // Center padding
   if center {
     xArray = reflectPad(xArray, padding: nFft / 2)
@@ -245,8 +251,8 @@ func stft(
   let frames = MLX.asStrided(xArray, shape, strides: strides)
 
   // Apply window and compute FFT
-  let windowedFrames = frames * window
-  let spec = MLXFFT.rfft(windowedFrames)
+  let windowedFrames = frames * w
+  let spec = MLX.rfft(windowedFrames)
 
   return spec
 }

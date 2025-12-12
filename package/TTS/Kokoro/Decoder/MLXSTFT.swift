@@ -102,7 +102,7 @@ func mlxStft(
 
   let frames = MLX.asStrided(xArray, shape, strides: strides)
 
-  let spec = MLXFFT.rfft(frames * w)
+  let spec = MLX.rfft(frames * w)
   return spec.transposed(1, 0)
 }
 
