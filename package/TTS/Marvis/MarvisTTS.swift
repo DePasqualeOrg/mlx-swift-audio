@@ -340,13 +340,13 @@ actor MarvisTTS {
     return (frame, mask)
   }
 
-  private func tokenizeSegment(_ segment: Segment, addEOS: Bool = true) -> (MLXArray, MLXArray) {
+  private func tokenizeSegment(_ segment: MarvisSegment, addEOS: Bool = true) -> (MLXArray, MLXArray) {
     let (txt, txtMask) = tokenizeTextSegment(text: segment.text, speaker: segment.speaker)
     let (aud, audMask) = tokenizeAudio(segment.audio, addEOS: addEOS)
     return (concatenated([txt, aud], axis: 0), concatenated([txtMask, audMask], axis: 0))
   }
 
-  private func tokenizeStart(for segment: Segment) -> (tokens: MLXArray, mask: MLXArray, pos: MLXArray) {
+  private func tokenizeStart(for segment: MarvisSegment) -> (tokens: MLXArray, mask: MLXArray, pos: MLXArray) {
     let (st, sm) = tokenizeSegment(segment, addEOS: false)
     let promptTokens = concatenated([st], axis: 0).asType(Int32.self)
     let promptMask = concatenated([sm], axis: 0).asType(Bool.self)
@@ -363,9 +363,9 @@ actor MarvisTTS {
     voice: MarvisEngine.Voice?,
     refAudio: MLXArray?,
     refText: String?,
-  ) throws -> Segment {
+  ) throws -> MarvisSegment {
     if let refAudio, let refText {
-      return Segment(speaker: 0, text: refText, audio: refAudio)
+      return MarvisSegment(speaker: 0, text: refText, audio: refAudio)
     } else if let voice {
       var refAudioURL: URL?
       for promptURL in promptURLs {
@@ -385,7 +385,7 @@ actor MarvisTTS {
       let refTextURL = refAudioURL.deletingPathExtension().appendingPathExtension("txt")
       let text = try String(data: Data(contentsOf: refTextURL), encoding: .utf8)
       guard let text else { throw MarvisTTSError.voiceNotFound }
-      return Segment(speaker: 0, text: text, audio: audio)
+      return MarvisSegment(speaker: 0, text: text, audio: audio)
     }
     throw MarvisTTSError.voiceNotFound
   }
@@ -418,7 +418,7 @@ actor MarvisTTS {
       }
 
       let generationText = (base.text + " " + prompt).trimmingCharacters(in: .whitespaces)
-      let seg = Segment(speaker: 0, text: generationText, audio: base.audio)
+      let seg = MarvisSegment(speaker: 0, text: generationText, audio: base.audio)
 
       try model.resetCaches()
       if stream { streamingDecoder.reset() }
@@ -566,7 +566,7 @@ actor MarvisTTS {
 
 // MARK: - Supporting Types
 
-private struct Segment {
+private struct MarvisSegment {
   let speaker: Int
   let text: String
   let audio: MLXArray

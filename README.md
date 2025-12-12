@@ -9,11 +9,16 @@
   - [Orpheus](https://github.com/canopyai/Orpheus-TTS)
   - [Marvis](https://github.com/Marvis-Labs/marvis-tts)
 
+- Speech to text
+  - [Whisper](https://github.com/openai/whisper)
+
 ### Installation
 
 In Xcode, go to File > Add Package Dependencies and enter `https://github.com/DePasqualeOrg/mlx-swift-audio`. Select the `main` branch, then add `MLXAudio` to your target. If you want to use Kokoro (which has GPLv3 dependencies), also add the `Kokoro` library.
 
 ### Usage
+
+Text to speech:
 
 ```swift
 import MLXAudio
@@ -40,15 +45,37 @@ let marvis = TTS.marvis()
 try await marvis.load()
 try await marvis.sayStreaming("This plays as it generates.", voice: .conversationalA)
 
-```
-
-For more control over playback:
-
-```swift
+// For more control over playback
 let orpheus = TTS.orpheus()
 try await orpheus.load()
 let audio = try await orpheus.generate("Hello!", voice: .tara)
 await audio.play()
+
+```
+
+Speech-to-text:
+
+```swift
+import MLXAudio
+
+// Whisper - multilingual speech recognition
+// Note: Currently only .largeTurbo is supported (other models coming soon)
+let whisper = STT.whisper(model: .largeTurbo)
+try await whisper.load()
+
+// Transcribe audio file (language auto-detected)
+let result = try await whisper.transcribe(audioFileURL)
+print(result.text)
+
+// Transcribe with specific language
+let result = try await whisper.transcribe(audioFileURL, language: .spanish)
+
+// Translate to English
+let translation = try await whisper.translate(audioFileURL)
+
+// Detect language only
+let (language, confidence) = try await whisper.detectLanguage(audioFileURL)
+print("\(language.displayName) (\(confidence))")
 ```
 
 ### Building

@@ -20,6 +20,7 @@ let package = Package(
     .package(url: "https://github.com/ml-explore/mlx-swift-lm", branch: "main"),
     .package(url: "https://github.com/ml-explore/mlx-swift", revision: "9594dbe2736a6ba03fe0f11514d7265fd2f7ba77"),
     .package(url: "https://github.com/huggingface/swift-transformers", .upToNextMinor(from: "1.1.0")),
+    .package(url: "https://github.com/DePasqualeOrg/TiktokenSwift", branch: "main"),
     // espeak-ng is GPLv3 licensed - only linked when using Kokoro
     // TODO: Switch back to upstream after https://github.com/espeak-ng/espeak-ng/pull/2327 is merged
     .package(url: "https://github.com/DePasqualeOrg/espeak-ng-spm.git", branch: "fix-path-espeak-data-macro"),
@@ -32,6 +33,7 @@ let package = Package(
         .product(name: "MLXLLM", package: "mlx-swift-lm"),
         .product(name: "MLXFFT", package: "mlx-swift"),
         .product(name: "Transformers", package: "swift-transformers"),
+        .product(name: "TiktokenSwift", package: "TiktokenSwift"),
       ],
       path: "package",
       exclude: ["TTS/Kokoro", "Tests"],

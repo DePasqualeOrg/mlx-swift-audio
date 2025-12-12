@@ -2,7 +2,6 @@
 
 import Foundation
 import MLX
-import MLXFFT
 import MLXNN
 
 // MARK: - Helper Functions
