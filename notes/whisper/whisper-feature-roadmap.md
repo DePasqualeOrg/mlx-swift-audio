@@ -1,7 +1,7 @@
 # MLX Whisper Feature Roadmap
 
 **Last Updated:** December 15, 2025
-**Purpose:** Track feature gaps and potential improvements for MLX Whisper based on WhisperKit analysis
+**Purpose:** Track feature gaps and potential improvements for MLX Whisper based on WhisperKit and mlx-audio-plus analysis
 
 ---
 
@@ -13,7 +13,7 @@ WhisperKit is a production-grade Swift implementation of Whisper by Argmax, desi
 
 ## Repository Overview
 
-### WhisperKit
+### WhisperKit (Swift/CoreML)
 - **Location:** `../forked/WhisperKit`
 - **Framework:** CoreML
 - **Lines of Code:** ~8,000+ in core modules
@@ -24,8 +24,19 @@ WhisperKit is a production-grade Swift implementation of Whisper by Argmax, desi
   - `Sources/WhisperKit/Core/Audio/AudioStreamTranscriber.swift`
   - `Sources/WhisperKit/Core/Audio/EnergyVAD.swift`
   - `Sources/WhisperKit/Core/Text/SegmentSeeker.swift`
+  - `Sources/WhisperKit/Core/Text/TokenSampler.swift` (greedy + beam search stub)
 
-### MLX Whisper
+### mlx-audio-plus (Python MLX)
+- **Location:** `../forked/mlx-audio-plus`
+- **Framework:** MLX (Python)
+- **Key Files:**
+  - `mlx_audio/stt/models/whisper/whisper.py` - Model definition & transcription
+  - `mlx_audio/stt/models/whisper/decoding.py` - Decoding strategies (greedy only)
+  - `mlx_audio/stt/models/whisper/audio.py` - Audio preprocessing
+  - `mlx_audio/stt/models/whisper/tokenizer.py` - Token vocabulary
+  - `mlx_audio/stt/models/whisper/timing.py` - Word-level timestamps
+
+### MLX Whisper (This Repo)
 - **Location:** `package/STT/Whisper/`
 - **Framework:** MLX (Apple's ML framework)
 - **Lines of Code:** ~3,200 in core modules
@@ -47,16 +58,27 @@ WhisperKit is a production-grade Swift implementation of Whisper by Argmax, desi
 | Translation | ✅ | ✅ | None |
 | Segment Timestamps | ✅ | ✅ | None |
 | Word Timestamps | ✅ | ✅ | None |
+| Timestamp Rules | ✅ | ✅ | None |
+| Temperature Fallback | ✅ | ✅ | None |
+| Compression Ratio Filter | ✅ | ✅ | None |
+| Log Prob Threshold | ✅ | ✅ | None |
+| No Speech Detection | ✅ | ✅ | None |
+| Prompt/Context Conditioning | ✅ | ✅ | None |
+| Quantization Support | ✅ | ✅ | None |
+| KV Cache | ✅ | ✅ | None |
 | Real-Time Streaming | ✅ | ❌ | **Major** |
 | Voice Activity Detection | ✅ (Energy-based) | ⚠️ (Segment-level only) | **Major** |
 | Progress Callbacks | ✅ | ❌ | Medium |
 | Concurrent Processing | ✅ | ❌ | Medium |
 | Model Prefill | ✅ | ❌ | Medium |
+| Transcription Cancellation | ✅ | ❌ | Medium |
+| Beam Search | ❌ (stub) | ❌ | Low* |
 | Modular Logits Filtering | ✅ | ⚠️ (Inline) | Minor |
 | Multi-Channel Audio | ✅ | ⚠️ (Mono only) | Minor |
 | Detailed Timing Metrics | ✅ (30+ metrics) | ⚠️ (Basic) | Minor |
-| Quantization Support | ✅ | ✅ | None |
-| KV Cache | ✅ | ✅ | None |
+| Custom Token Suppression | ✅ | ❌ | Minor |
+
+*Beam search is not implemented in either WhisperKit or mlx-audio-plus (Python MLX). See "Beam Search Investigation" section below.
 
 ---
 
@@ -333,7 +355,238 @@ public struct DecodingOptions {
 
 ---
 
+## Beam Search Investigation (December 2025)
+
+### Executive Summary
+
+**Finding: Beam search is NOT implemented in either reference repository.**
+
+Both `mlx-audio-plus` (Python MLX) and `WhisperKit` (Swift) have beam search infrastructure in place but neither has a functional implementation.
+
+---
+
+### mlx-audio-plus (Python MLX)
+
+**Location:** `../forked/mlx-audio-plus/mlx_audio/stt/models/whisper/decoding.py`
+
+**Status:** Infrastructure exists, throws NotImplementedError
+
+```python
+# Lines 436-439
+if options.beam_size is not None:
+    raise NotImplementedError("Beam search decoder is not yet implemented")
+else:
+    self.decoder = GreedyDecoder(options.temperature, tokenizer.eot)
+```
+
+**Available Parameters (DecodingOptions, lines 94-95):**
+- `beam_size: Optional[int] = None` - number of beams
+- `patience: Optional[float] = None` - early stopping patience (references arxiv:2204.05424)
+
+**What IS Implemented:**
+- `GreedyDecoder` (lines 255-283): Full implementation with temperature sampling
+- `MaximumLikelihoodRanker` (lines 165-188): Length penalty normalization for sequence ranking
+- KV cache infrastructure has `rearrange_kv_cache()` method (lines 144-148) ready for beam search
+- Validation logic for beam_size/best_of mutual exclusivity (lines 466-472)
+
+---
+
+### WhisperKit (Swift)
+
+**Location:** `../forked/WhisperKit/Sources/WhisperKit/Core/Text/TokenSampler.swift`
+
+**Status:** Stub class exists, throws fatalError
+
+```swift
+// Lines 254-290
+open class BeamSearchTokenSampler: TokenSampling {
+    public var beamSize: Int
+    public var eotToken: Int
+    public var patience: Float
+    var maxCandidates: Int
+    var finishedSequences: [Float]
+
+    public init(beamSize: Int, eotToken: Int, patience: Float = 1) {
+        self.beamSize = beamSize
+        self.eotToken = eotToken
+        self.patience = patience
+        self.maxCandidates = Int(Float(beamSize) * patience)
+        self.finishedSequences = []
+    }
+
+    public func update(tokens: [Int], logits: MLMultiArray, logProbs: [Float]) -> SamplingResult {
+        // TODO: Implement
+        fatalError("Not implemented: \(#function)")
+    }
+
+    public func finalize(tokens: [Int], logProbs: [Float]) -> SamplingResult {
+        // TODO: Implement
+        fatalError("Not implemented: \(#function)")
+    }
+}
+```
+
+**What IS Implemented:**
+- `GreedyTokenSampler` (lines 29-252): Full implementation with dual backends
+  - MLTensor (macOS 15+, iOS 18+): Native Core ML tensor operations
+  - BNNS fallback: Accelerate framework (marked deprecated, needs vDSP/MLX replacement)
+- Temperature-based sampling: argmax when T=0, top-K multinomial when T>0
+
+---
+
+### Decoding Features Comparison
+
+| Feature | mlx-audio-plus | WhisperKit | This Repo |
+|---------|----------------|------------|-----------|
+| Greedy Decoding | ✅ | ✅ | ✅ |
+| Temperature Sampling | ✅ | ✅ | ✅ |
+| Beam Search | ❌ (NotImplementedError) | ❌ (fatalError) | ❌ |
+| Best-of-N Sampling | ✅ (infrastructure) | ❌ | ❌ |
+| Temperature Fallback | ✅ | ✅ | ❌ |
+| Compression Ratio Filter | ✅ (threshold: 2.4) | ✅ (threshold: 2.4) | ❌ |
+| Log Prob Threshold | ✅ (threshold: -1.0) | ✅ (threshold: -1.0) | ❌ |
+| First Token Log Prob | ❌ | ✅ (threshold: -1.5) | ❌ |
+| No Speech Detection | ✅ (threshold: 0.6) | ✅ (threshold: 0.6) | ⚠️ (basic) |
+| Length Penalty | ✅ | ❌ | ❌ |
+
+---
+
+### Beam Search Implementation Requirements
+
+To implement beam search in MLX Swift, the following components would be needed:
+
+#### 1. Core Algorithm
+```swift
+class BeamSearchDecoder {
+    var beamSize: Int           // Number of hypotheses to maintain
+    var patience: Float         // Early stopping patience (default 1.0)
+    var maxCandidates: Int      // beamSize * patience
+
+    struct Hypothesis {
+        var tokens: [Int]
+        var logProb: Float
+        var isFinished: Bool
+    }
+
+    var activeHypotheses: [Hypothesis]
+    var finishedHypotheses: [Hypothesis]
+}
+```
+
+#### 2. Key Operations
+- **Expand**: For each hypothesis, get top-K next tokens
+- **Prune**: Keep only top beamSize hypotheses by log probability
+- **Finish**: Move hypotheses ending with EOT to finished set
+- **Early Stop**: Stop when patience condition met (all top candidates finished)
+
+#### 3. KV Cache Handling
+- Must duplicate/rearrange KV cache for each beam
+- Reference: `rearrange_kv_cache()` in mlx-audio-plus (lines 144-148)
+- Memory consideration: beamSize × original cache size
+
+#### 4. Length Normalization (Optional)
+```swift
+// Google NMT paper length penalty
+func lengthPenalty(length: Int, alpha: Float) -> Float {
+    return pow((5.0 + Float(length)) / 6.0, alpha)
+}
+
+func normalizedScore(logProb: Float, length: Int) -> Float {
+    return logProb / lengthPenalty(length: length, alpha: self.lengthPenalty)
+}
+```
+
+---
+
+### Priority Assessment
+
+**Should we implement beam search?**
+
+Arguments **against** prioritizing beam search:
+1. Neither major reference implementation has it working
+2. Greedy decoding with temperature fallback produces good results for most use cases
+3. Beam search significantly increases memory usage (beamSize × KV cache)
+4. Modern large models (large-v3, turbo) perform well with greedy
+
+Arguments **for** implementing beam search:
+1. Can improve accuracy on difficult/ambiguous audio
+2. Required for some research applications
+3. Would make this repo more feature-complete than references
+
+**Recommendation:** Lower priority than streaming, VAD, and temperature fallback. Consider implementing after those features are complete.
+
+---
+
+### Additional Findings: Quality Control Features
+
+Both reference implementations have sophisticated quality control that we lack:
+
+#### Temperature Fallback (High Value)
+```python
+# mlx-audio-plus pattern (whisper.py lines 521-557)
+temperatures = (0.0, 0.2, 0.4, 0.6, 0.8, 1.0)
+for t in temperatures:
+    result = decode(segment, temperature=t)
+    if result.compression_ratio <= 2.4 and result.avg_logprob >= -1.0:
+        break  # Good enough quality
+    # Otherwise retry with higher temperature
+```
+
+This prevents:
+- Repetitive/hallucinated output (compression ratio check)
+- Low-confidence gibberish (log prob check)
+
+#### Compression Ratio Calculation
+```python
+def compression_ratio(text: str) -> float:
+    text_bytes = text.encode("utf-8")
+    return len(text_bytes) / len(zlib.compress(text_bytes))
+```
+
+High compression ratio (>2.4) indicates repetitive text, often a sign of hallucination.
+
+---
+
 ## Resolved Issues
+
+### Quality Control Features (RESOLVED - December 2025)
+
+The following features from the Python reference implementation have been ported:
+
+**Temperature Fallback:**
+- Location: `WhisperSTT.swift` lines 180-230
+- Automatically retries decoding with higher temperatures (0.0 → 0.2 → 0.4 → ...) when quality checks fail
+- Triggers on: compression ratio > 2.4, avg log prob < -1.0
+
+**Compression Ratio Filtering:**
+- Location: `WhisperDecoding.swift` lines 390-410 (`computeCompressionRatio`)
+- Uses zlib compression to detect repetitive/hallucinated text
+- Threshold: 2.4 (matches Python default)
+
+**Log Probability Threshold:**
+- Location: `WhisperSTT.swift` lines 195-210
+- Skips segments with avg_logprob < -1.0
+- Configurable via `logprobThreshold` parameter
+
+**No Speech Detection:**
+- Location: `WhisperDecoding.swift` line 155 (`noSpeechProb` calculation)
+- Uses probability of EOT token at first decoding step
+- Threshold: 0.6 (matches Python default)
+
+**Timestamp Rules (ApplyTimestampRules):**
+- Location: `WhisperDecoding.swift` lines 215-330
+- Enforces timestamp/text alternation
+- Ensures monotonically increasing timestamps
+- Implements `max_initial_timestamp` (1.0s default)
+- Uses probability heuristic for timestamp forcing
+
+**Prompt/Context Conditioning:**
+- Location: `WhisperSTT.swift` lines 174-177, `WhisperDecoding.swift` lines 103-111
+- `conditionOnPreviousText` parameter enables using previous segment output as prompt
+- Prepends `<|startofprev|>` token followed by previous tokens
+- Resets prompt when temperature > 0.5 (matches Python behavior)
+
+---
 
 ### Alignment Heads Configuration (RESOLVED - December 2025)
 
@@ -371,16 +624,27 @@ public struct DecodingOptions {
 
 ## Priority Recommendations
 
-| Priority | Feature | Impact | Effort |
-|----------|---------|--------|--------|
-| 1 | Real-Time Streaming | High | High |
-| 2 | Energy-Based VAD | High | Medium |
-| 3 | Progress Callbacks | Medium | Low |
-| 4 | Logits Filter Architecture | Medium | Medium |
-| 5 | Model Prefill | Medium | Medium |
-| 6 | Concurrent Processing | Medium | Medium |
-| 7 | Audio Channel Options | Low | Low |
-| 8 | Enhanced Config Options | Low | Low |
+| Priority | Feature | Impact | Effort | Status |
+|----------|---------|--------|--------|--------|
+| ~~1~~ | ~~Temperature Fallback~~ | ~~High~~ | ~~Low~~ | ✅ Done |
+| ~~2~~ | ~~Compression Ratio / Log Prob Filters~~ | ~~High~~ | ~~Low~~ | ✅ Done |
+| ~~3~~ | ~~Timestamp Rules (ApplyTimestampRules)~~ | ~~High~~ | ~~Medium~~ | ✅ Done |
+| ~~4~~ | ~~Prompt/Context Conditioning~~ | ~~Medium~~ | ~~Medium~~ | ✅ Done |
+| 1 | Real-Time Streaming | High | High | ❌ |
+| 2 | Energy-Based VAD | High | Medium | ❌ |
+| 3 | Progress Callbacks | Medium | Low | ❌ |
+| 4 | Transcription Cancellation | Medium | Low | ❌ |
+| 5 | Logits Filter Architecture | Medium | Medium | ❌ |
+| 6 | Model Prefill | Medium | Medium | ❌ |
+| 7 | Concurrent Processing | Medium | Medium | ❌ |
+| 8 | Audio Channel Options | Low | Low | ❌ |
+| 9 | Custom Token Suppression API | Low | Low | ❌ |
+| 10 | Detailed Timing Metrics | Low | Low | ❌ |
+| 11 | Beam Search | Low | High | ❌ |
+
+**Note on Beam Search:** Neither WhisperKit nor mlx-audio-plus has implemented beam search. Given that greedy decoding with temperature fallback works well for most use cases, beam search should be considered low priority unless specifically needed for research applications.
+
+**Recently Completed:** Temperature fallback, compression ratio filtering, log prob thresholds, timestamp rules (ApplyTimestampRules), and prompt/context conditioning have all been implemented.
 
 ---
 
