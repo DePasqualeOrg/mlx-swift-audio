@@ -1,6 +1,6 @@
 # MLX Whisper Feature Roadmap
 
-**Last Updated:** December 15, 2025
+**Last Updated:** December 16, 2025
 **Purpose:** Track feature gaps and potential improvements for MLX Whisper based on WhisperKit and mlx-audio-plus analysis
 
 ---
@@ -442,11 +442,12 @@ open class BeamSearchTokenSampler: TokenSampling {
 | Temperature Sampling | ✅ | ✅ | ✅ |
 | Beam Search | ❌ (NotImplementedError) | ❌ (fatalError) | ❌ |
 | Best-of-N Sampling | ✅ (infrastructure) | ❌ | ❌ |
-| Temperature Fallback | ✅ | ✅ | ❌ |
-| Compression Ratio Filter | ✅ (threshold: 2.4) | ✅ (threshold: 2.4) | ❌ |
-| Log Prob Threshold | ✅ (threshold: -1.0) | ✅ (threshold: -1.0) | ❌ |
+| Temperature Fallback | ✅ | ✅ | ✅ |
+| Compression Ratio Filter | ✅ (threshold: 2.4) | ✅ (threshold: 2.4) | ✅ (threshold: 2.4) |
+| Log Prob Threshold | ✅ (threshold: -1.0) | ✅ (threshold: -1.0) | ✅ (threshold: -1.0) |
 | First Token Log Prob | ❌ | ✅ (threshold: -1.5) | ❌ |
-| No Speech Detection | ✅ (threshold: 0.6) | ✅ (threshold: 0.6) | ⚠️ (basic) |
+| No Speech Detection | ✅ (threshold: 0.6) | ✅ (threshold: 0.6) | ✅ (threshold: 0.6) |
+| Hallucination Filtering | ❌ | ⚠️ (windowClipTime) | ✅ (timestamp + confidence) |
 | Length Penalty | ✅ | ❌ | ❌ |
 
 ---
@@ -588,6 +589,38 @@ The following features from the Python reference implementation have been ported
 
 ---
 
+### Hallucination Prevention (RESOLVED - December 2025)
+
+Additional filters to catch and prevent hallucinations, particularly for short/final audio segments:
+
+**Seek Sanity Check:**
+- Location: `WhisperSTT.swift` line 347-352
+- Prevents hallucinated timestamps from causing seek to jump beyond the current segment
+- The model can hallucinate timestamps pointing far into the future (e.g., 25s when only 2s of audio remains)
+- Uses `min(timestampSeek, segmentSize)` to cap seek advancement
+
+**Timestamp Window Filter:**
+- Location: `WhisperSTT.swift` lines 410-418
+- Filters out segments where end timestamp exceeds the segment window (+ 1s tolerance)
+- Catches impossible timestamps like 20s into a 2s segment
+- These are clear indicators of hallucination
+
+**Low-Confidence Filter:**
+- Location: `WhisperSTT.swift` lines 421-429
+- Discards all segments when temperature >= 0.8 AND avg_logprob < -2.0
+- High temperature + low confidence after fallback exhaustion indicates hallucination
+- Particularly effective for silence/unclear audio at end of content
+
+**Short Segment Temperature Optimization:**
+- Location: `WhisperSTT.swift` lines 189-191
+- Uses fewer temperature steps for very short segments (< 2s): [0.0, 0.5, 1.0] instead of [0.0, 0.2, 0.4, 0.6, 0.8, 1.0]
+- Short segments are unlikely to benefit from extensive fallbacks and often produce hallucinations anyway
+- Reduces processing time significantly for final audio segments
+
+**Note:** These improvements were also backported to the Python mlx-audio-plus implementation.
+
+---
+
 ### Alignment Heads Configuration (RESOLVED - December 2025)
 
 **Background:** Alignment heads are specific cross-attention heads in the Whisper decoder that OpenAI identified as highly correlated with word-level timing. Only a sparse subset of heads provides good timing information.
@@ -644,7 +677,7 @@ The following features from the Python reference implementation have been ported
 
 **Note on Beam Search:** Neither WhisperKit nor mlx-audio-plus has implemented beam search. Given that greedy decoding with temperature fallback works well for most use cases, beam search should be considered low priority unless specifically needed for research applications.
 
-**Recently Completed:** Temperature fallback, compression ratio filtering, log prob thresholds, timestamp rules (ApplyTimestampRules), and prompt/context conditioning have all been implemented.
+**Recently Completed:** Temperature fallback, compression ratio filtering, log prob thresholds, timestamp rules (ApplyTimestampRules), prompt/context conditioning, and hallucination prevention (seek sanity check, timestamp window filter, low-confidence filter, short segment optimization) have all been implemented.
 
 ---
 
