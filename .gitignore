@@ -69,3 +69,6 @@ xcuserdata/
 
 # uv
 .build
+
+# Agents
+CLAUDE.md
