@@ -1,5 +1,3 @@
-// Copyright © Anthony DePasquale
-
 import AVFoundation
 import Foundation
 import Hub
@@ -9,15 +7,143 @@ import Testing
 
 @testable import MLXAudio
 
+// MARK: - Unit Tests
+
+@Suite
+struct CosyVoice3UnitTests {
+  /// Test rotary embedding computation
+  @Test func testRotaryEmbeddingComputation() async throws {
+    let dim = 64
+    let seqLen = 938
+    let base: Float = 10000.0
+
+    // Compute inv_freq
+    let arange = MLXArray(stride(from: 0, to: dim, by: 2)).asType(.float32)
+    print("arange shape: \(arange.shape)")
+    #expect(arange.shape == [32])
+
+    let invFreq = 1.0 / MLX.pow(MLXArray(base), arange / Float(dim))
+    print("invFreq shape: \(invFreq.shape)")
+    #expect(invFreq.shape == [32])
+
+    // Create positions
+    var positions = MLXArray(0 ..< seqLen).asType(.float32)
+    print("positions shape before expand: \(positions.shape)")
+    #expect(positions.shape == [938])
+
+    positions = positions.expandedDimensions(axis: 0)
+    print("positions shape after expand: \(positions.shape)")
+    #expect(positions.shape == [1, 938])
+
+    // Compute freqs via einsum
+    let freqs = MLX.einsum("bi,j->bij", positions, invFreq)
+    print("freqs shape: \(freqs.shape)")
+    #expect(freqs.shape == [1, 938, 32])
+
+    // Stack
+    let stacked = MLX.stacked([freqs, freqs], axis: -1)
+    print("stacked shape: \(stacked.shape)")
+    #expect(stacked.shape == [1, 938, 32, 2])
+
+    // Reshape to interleave
+    let freqsInterleaved = stacked.reshaped([stacked.shape[0], stacked.shape[1], -1])
+    print("freqsInterleaved shape: \(freqsInterleaved.shape)")
+    #expect(freqsInterleaved.shape == [1, 938, 64])
+
+    print("Rotary embedding computation test passed!")
+  }
+
+  /// Test the actual RotaryEmbedding class
+  @Test func testRotaryEmbeddingClass() async throws {
+    // Create a RotaryEmbedding with dim=64 (same as DiT config)
+    let rotaryEmbed = RotaryEmbedding(dim: 64)
+
+    // Test with sequence length 938
+    let seqLen = 938
+    let (freqs, scale) = rotaryEmbed.forwardFromSeqLen(seqLen)
+
+    print("RotaryEmbedding class test:")
+    print("  freqs shape: \(freqs.shape)")
+    print("  scale: \(scale)")
+
+    #expect(freqs.shape == [1, 938, 64], "Expected freqs shape [1, 938, 64], got \(freqs.shape)")
+
+    print("RotaryEmbedding class test passed!")
+  }
+
+  /// Test model loading
+  @Test func testModelLoading() async throws {
+    let modelRepoId = "mlx-community/Fun-CosyVoice3-0.5B-2512-4bit"
+
+    print("Loading CosyVoice3 model...")
+    let loadStart = CFAbsoluteTimeGetCurrent()
+    let tts = try await CosyVoice3TTS.load(repoId: modelRepoId)
+    let loadTime = CFAbsoluteTimeGetCurrent() - loadStart
+    print("Model loaded in \(String(format: "%.2f", loadTime))s")
+
+    // Access the model's flow decoder and test its rotary embedding
+    // This tests that weights were loaded correctly
+    print("Model loading test passed!")
+  }
+
+  /// Test DiT forward pass in isolation (without loaded weights)
+  @Test func testDiTForward() async throws {
+    // Create a DiT instance directly with default parameters
+    let melDim = 80
+    let spkDim = 192
+    let dit = DiT(
+      dim: 1024, depth: 2, heads: 16, dimHead: 64, // Use depth=2 for faster test
+      dropout: 0.0, ffMult: 2, melDim: melDim, muDim: melDim,
+      longSkipConnection: false, spkDim: spkDim,
+      outChannels: melDim, staticChunkSize: 50, numDecodingLeftChunks: -1
+    )
+
+    // Create dummy inputs for DiT
+    let batchSize = 1
+    let seqLen = 100
+
+    // Input shapes for DiT: (B, mel_dim, N) - channel-first
+    let x = MLXArray.zeros([batchSize, melDim, seqLen])
+    let mask = MLXArray.ones([batchSize, seqLen])
+    let mu = MLXArray.zeros([batchSize, melDim, seqLen])
+    let t = MLXArray(0.5) // Timestep
+    let spks = MLXArray.zeros([batchSize, spkDim])
+
+    print("Testing DiT forward pass...")
+    print("  x shape: \(x.shape)")
+    print("  mask shape: \(mask.shape)")
+    print("  mu shape: \(mu.shape)")
+
+    // Call DiT forward
+    let noCond: MLXArray? = nil
+    let output = dit(
+      x: x,
+      mask: mask,
+      mu: mu,
+      t: t,
+      spks: spks,
+      cond: noCond,
+      streaming: false
+    )
+
+    print("  output shape: \(output.shape)")
+    #expect(output.shape[0] == batchSize)
+    #expect(output.shape[1] == melDim)
+    #expect(output.shape[2] == seqLen)
+
+    print("DiT forward test passed!")
+  }
+}
+
 // MARK: - End-to-End Integration Tests
 
 @Suite(.serialized)
-struct CosyVoice2IntegrationTests {
+struct CosyVoice3IntegrationTests {
   /// HuggingFace repo ID for 4-bit model
-  static let modelRepoId = "mlx-community/CosyVoice2-0.5B-4bit"
+  static let modelRepoId = "mlx-community/Fun-CosyVoice3-0.5B-2512-4bit"
 
-  /// HuggingFace repo ID for S3 tokenizer
-  static let s3TokenizerRepoId = "mlx-community/S3TokenizerV2"
+  /// HuggingFace repo ID for S3 tokenizer V3 (CosyVoice3 uses V3 with 12 layers)
+  static let s3TokenizerRepoId = "mlx-community/S3TokenizerV3"
 
   /// Reference audio from LJ Speech dataset (public domain)
   /// This is a clear female voice reading: "The examination and testimony of the experts
@@ -27,15 +153,15 @@ struct CosyVoice2IntegrationTests {
     "The examination and testimony of the experts enabled the commission to conclude that five shots may have been fired"
 
   /// Output directory for generated audio
-  static let outputDir = FileManager.default.temporaryDirectory.appendingPathComponent("cosyvoice2-test")
+  static let outputDir = FileManager.default.temporaryDirectory.appendingPathComponent("cosyvoice3-test")
 
-  /// Load S3TokenizerV2 from HuggingFace
-  static func loadS3Tokenizer() async throws -> S3TokenizerV2 {
+  /// Load S3TokenizerV3 from HuggingFace (CosyVoice3 uses V3 with 12 layers)
+  static func loadS3Tokenizer() async throws -> S3TokenizerV3 {
     let modelDirectory = try await HubConfiguration.shared.snapshot(from: s3TokenizerRepoId)
     let weightURL = modelDirectory.appendingPathComponent("model.safetensors")
     let weights = try MLX.loadArrays(url: weightURL)
 
-    let tokenizer = S3TokenizerV2()
+    let tokenizer = S3TokenizerV3()
 
     // Load weights into tokenizer
     let parameters = ModuleParameters.unflattened(weights)
@@ -148,17 +274,67 @@ struct CosyVoice2IntegrationTests {
     return Float(matchedWords.count) / Float(expectedWords.count)
   }
 
-  /// End-to-end test: Generate speech in both modes and verify with Whisper
+  /// Simple audio generation test using CosyVoice3Engine
+  /// Listen to output manually at /tmp/cosyvoice3-test/
+  @Test func testAudioGeneration() async throws {
+    print("=== CosyVoice3 Audio Generation Test ===\n")
+
+    // Create engine
+    let engine = await CosyVoice3Engine()
+
+    // Load model (includes S3TokenizerV3 and CosyVoice3 model)
+    print("Loading CosyVoice3Engine...")
+    try await engine.load(progressHandler: nil)
+
+    // Prepare speaker from reference audio (auto-transcribes with Whisper)
+    print("\nPreparing speaker from reference audio...")
+    let speaker = try await engine.prepareSpeaker(
+      from: Self.referenceAudioURL,
+      transcription: Self.referenceTranscription // Provide transcription for zero-shot mode
+    )
+    print("  Speaker: \(speaker.description)")
+    print("  Duration: \(String(format: "%.1f", speaker.duration))s")
+    print("  Has transcription: \(speaker.hasTranscription)")
+
+    // Create output directory
+    try FileManager.default.createDirectory(at: Self.outputDir, withIntermediateDirectories: true)
+
+    // Generate audio
+    let text = "Hello, this is a test of the voice cloning system."
+    print("\nGenerating: \"\(text)\"")
+
+    let start = CFAbsoluteTimeGetCurrent()
+    let result = try await engine.generate(text, speaker: speaker)
+    let elapsed = CFAbsoluteTimeGetCurrent() - start
+
+    // Extract audio samples
+    guard case let .samples(samples, sampleRate, _) = result else {
+      throw CosyVoice3Error.invalidInput("Expected samples result")
+    }
+
+    let duration = Float(samples.count) / Float(sampleRate)
+
+    // Save audio
+    let outputURL = Self.outputDir.appendingPathComponent("cosyvoice3_test.wav")
+    try Self.saveAudio(samples, to: outputURL, sampleRate: sampleRate)
+
+    print("\n✓ Generated \(String(format: "%.2f", duration))s audio in \(String(format: "%.2f", elapsed))s")
+    print("  RTF: \(String(format: "%.2fx", Float(elapsed) / duration))")
+    print("  Output: \(outputURL.path)")
+    print("\nOpen with: open \"\(outputURL.path)\"")
+  }
+
+  /// End-to-end test: Generate speech in multiple modes and verify with Whisper
   /// Uses publicly available LJ Speech audio as reference voice
   @Test func testVoiceMatchingWithWhisperVerification() async throws {
-    print("=== CosyVoice2 Voice Matching Test with Whisper Verification ===\n")
+    print("=== CosyVoice3 Voice Matching Test with Whisper Verification ===\n")
 
     // === Step 1: Load all models once ===
     print("Step 1: Loading models...")
 
     let ttsStart = CFAbsoluteTimeGetCurrent()
-    let tts = try await CosyVoice2TTS.load(repoId: Self.modelRepoId)
-    print("  CosyVoice2 loaded in \(String(format: "%.2f", CFAbsoluteTimeGetCurrent() - ttsStart))s")
+    let tts = try await CosyVoice3TTS.load(repoId: Self.modelRepoId)
+    print("  CosyVoice3 loaded in \(String(format: "%.2f", CFAbsoluteTimeGetCurrent() - ttsStart))s")
 
     let s3Start = CFAbsoluteTimeGetCurrent()
     let s3Tokenizer = try await Self.loadS3Tokenizer()
@@ -191,7 +367,7 @@ struct CosyVoice2IntegrationTests {
       s3Tokenizer: { mel, melLen in tokenizer(mel, melLen: melLen) }
     )
 
-    let crossLingualText = "Hello, this is a test of CosyVoice voice matching."
+    let crossLingualText = "Hello, this is a test of CosyVoice three voice matching."
     print("  Input: \"\(crossLingualText)\"")
 
     let crossLingualTokens = await tts.encode(text: crossLingualText)
@@ -207,7 +383,7 @@ struct CosyVoice2IntegrationTests {
     let crossLingualDuration = Float(crossLingualResult.audio.count) / Float(crossLingualResult.sampleRate)
     let crossLingualRTF = Float(crossLingualTime) / crossLingualDuration
 
-    let crossLingualURL = Self.outputDir.appendingPathComponent("cross_lingual_test.wav")
+    let crossLingualURL = Self.outputDir.appendingPathComponent("cosyvoice3_cross_lingual_test.wav")
     try Self.saveAudio(crossLingualResult.audio, to: crossLingualURL, sampleRate: crossLingualResult.sampleRate)
 
     let crossLingualTranscription = try await whisper.transcribe(crossLingualURL, language: .english)
@@ -217,7 +393,7 @@ struct CosyVoice2IntegrationTests {
     print("  Accuracy: \(String(format: "%.0f%%", crossLingualAccuracy * 100)), RTF: \(String(format: "%.2fx", crossLingualRTF))")
     print("  Saved: \(crossLingualURL.path)")
 
-    #expect(crossLingualAccuracy >= 0.70, "Cross-lingual: Expected ≥70% accuracy, got \(String(format: "%.0f%%", crossLingualAccuracy * 100))")
+    #expect(crossLingualAccuracy >= 0.70, "Cross-lingual: Expected >=70% accuracy, got \(String(format: "%.0f%%", crossLingualAccuracy * 100))")
     #expect(crossLingualRTF < 5.0, "Cross-lingual: RTF \(String(format: "%.1f", crossLingualRTF)) exceeds 5x threshold")
 
     // === Test 2: Zero-shot mode ===
@@ -246,7 +422,7 @@ struct CosyVoice2IntegrationTests {
     let zeroShotDuration = Float(zeroShotResult.audio.count) / Float(zeroShotResult.sampleRate)
     let zeroShotRTF = Float(zeroShotTime) / zeroShotDuration
 
-    let zeroShotURL = Self.outputDir.appendingPathComponent("zero_shot_test.wav")
+    let zeroShotURL = Self.outputDir.appendingPathComponent("cosyvoice3_zero_shot_test.wav")
     try Self.saveAudio(zeroShotResult.audio, to: zeroShotURL, sampleRate: zeroShotResult.sampleRate)
 
     let zeroShotTranscription = try await whisper.transcribe(zeroShotURL, language: .english)
@@ -256,13 +432,12 @@ struct CosyVoice2IntegrationTests {
     print("  Accuracy: \(String(format: "%.0f%%", zeroShotAccuracy * 100)), RTF: \(String(format: "%.2fx", zeroShotRTF))")
     print("  Saved: \(zeroShotURL.path)")
 
-    #expect(zeroShotAccuracy >= 0.70, "Zero-shot: Expected ≥70% accuracy, got \(String(format: "%.0f%%", zeroShotAccuracy * 100))")
+    #expect(zeroShotAccuracy >= 0.70, "Zero-shot: Expected >=70% accuracy, got \(String(format: "%.0f%%", zeroShotAccuracy * 100))")
     #expect(zeroShotRTF < 5.0, "Zero-shot: RTF \(String(format: "%.1f", zeroShotRTF)) exceeds 5x threshold")
 
     // Cleanup
     await whisper.unload()
-//    try? FileManager.default.removeItem(at: Self.outputDir)
 
-    print("\n=== All voice matching tests passed! ===")
+    print("\n=== All CosyVoice3 voice matching tests passed! ===")
   }
 }

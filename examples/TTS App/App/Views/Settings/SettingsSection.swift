@@ -3,6 +3,12 @@
 import MLXAudio
 import SwiftUI
 
+/// Error for file access failures
+private struct FileAccessError: LocalizedError {
+  let message: String
+  var errorDescription: String? { message }
+}
+
 struct SettingsSection: View {
   @Environment(AppState.self) private var appState
 
@@ -81,7 +87,7 @@ struct SettingsSection: View {
         ReferenceAudioPicker(
           config: ReferenceAudioPickerConfig(
             title: "Speaker",
-            infoText: "CosyVoice2 matches voice characteristics from reference audio. Use 5-30 seconds of clear speech for best results."
+            infoText: "CosyVoice 2 matches voice characteristics from reference audio. Use 5-30 seconds of clear speech for best results."
           ),
           statusDescription: appState.cosyVoice2SpeakerDescription,
           isLoaded: appState.isCosyVoice2SpeakerLoaded,
@@ -98,6 +104,30 @@ struct SettingsSection: View {
 
         // Generation mode picker
         CosyVoice2ModeSection()
+      }
+
+      // Speaker (CosyVoice3)
+      if appState.selectedProvider == .cosyVoice3 {
+        ReferenceAudioPicker(
+          config: ReferenceAudioPickerConfig(
+            title: "Speaker",
+            infoText: "CosyVoice 3 matches voice characteristics from reference audio. Use 5-30 seconds of clear speech for best results."
+          ),
+          statusDescription: appState.cosyVoice3SpeakerDescription,
+          isLoaded: appState.isCosyVoice3SpeakerLoaded,
+          onLoadDefault: {
+            try await appState.prepareDefaultCosyVoice3Speaker()
+          },
+          onLoadFromFile: { url in
+            try await appState.prepareCosyVoice3Speaker(from: url)
+          },
+          onLoadFromURL: { url in
+            try await appState.prepareCosyVoice3Speaker(from: url)
+          }
+        )
+
+        // Generation mode picker
+        CosyVoice3ModeSection()
       }
 
       // Provider Status Message
@@ -273,11 +303,171 @@ private struct CosyVoice2SourceAudioSection: View {
 
       // Start accessing the security-scoped resource
       guard url.startAccessingSecurityScopedResource() else {
-        throw NSError(domain: "CosyVoice2", code: 1, userInfo: [NSLocalizedDescriptionKey: "Unable to access the selected file"])
+        throw FileAccessError(message: "Unable to access the selected file")
       }
       defer { url.stopAccessingSecurityScopedResource() }
 
       try await appState.prepareCosyVoice2SourceAudio(from: url)
+      isLoading = false
+    } catch {
+      isLoading = false
+      errorMessage = error.localizedDescription
+    }
+  }
+}
+
+// MARK: - CosyVoice3 Components
+
+/// Generation mode section for CosyVoice3
+private struct CosyVoice3ModeSection: View {
+  @Environment(AppState.self) private var appState
+
+  var body: some View {
+    @Bindable var appState = appState
+    VStack(alignment: .leading, spacing: 12) {
+      // Mode picker
+      HStack {
+        Picker("Mode", selection: $appState.cosyVoice3GenerationMode) {
+          ForEach(CosyVoice3Engine.GenerationMode.allCases, id: \.self) { mode in
+            Text(mode.rawValue)
+              .tag(mode)
+          }
+        }
+        .pickerStyle(.menu)
+      }
+
+      // Mode description
+      Text(appState.cosyVoice3GenerationMode.description)
+        .font(.caption)
+        .foregroundStyle(.secondary)
+
+      // Mode-specific UI
+      switch appState.cosyVoice3GenerationMode {
+        case .instruct:
+          CosyVoice3InstructSection()
+        case .voiceConversion:
+          CosyVoice3SourceAudioSection()
+        case .zeroShot:
+          CosyVoice3ZeroShotSection()
+        case .crossLingual:
+          EmptyView()
+      }
+    }
+  }
+}
+
+/// Instruct text input for CosyVoice3 instruct mode
+private struct CosyVoice3InstructSection: View {
+  @Environment(AppState.self) private var appState
+
+  var body: some View {
+    @Bindable var appState = appState
+    VStack(alignment: .leading, spacing: 4) {
+      Text("Style Instructions")
+        .font(.caption)
+        .foregroundStyle(.secondary)
+      TextField("e.g., Speak slowly and calmly", text: $appState.cosyVoice3InstructText)
+        .textFieldStyle(.roundedBorder)
+    }
+  }
+}
+
+/// Zero-shot mode section showing transcription status
+private struct CosyVoice3ZeroShotSection: View {
+  @Environment(AppState.self) private var appState
+
+  var body: some View {
+    VStack(alignment: .leading, spacing: 4) {
+      if let speaker = appState.cosyVoice3Speaker {
+        if let transcription = speaker.transcription {
+          Text("Speaker Transcription")
+            .font(.caption)
+            .foregroundStyle(.secondary)
+          Text(transcription)
+            .font(.caption)
+            .foregroundStyle(.primary)
+            .lineLimit(3)
+            .padding(8)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(.background.secondary)
+            .clipShape(RoundedRectangle(cornerRadius: 6))
+        } else {
+          Text("No transcription available. Speaker audio will be auto-transcribed when loaded.")
+            .font(.caption)
+            .foregroundStyle(.orange)
+        }
+      }
+    }
+  }
+}
+
+/// Source audio picker for CosyVoice3 voice conversion mode
+private struct CosyVoice3SourceAudioSection: View {
+  @Environment(AppState.self) private var appState
+  @State private var isLoading = false
+  @State private var showFilePicker = false
+  @State private var errorMessage: String?
+
+  var body: some View {
+    VStack(alignment: .leading, spacing: 8) {
+      HStack {
+        Text("Source Audio")
+          .font(.subheadline.weight(.medium))
+        Spacer()
+        if isLoading {
+          ProgressView()
+            .scaleEffect(0.7)
+        }
+      }
+
+      Text("Audio to convert to the target speaker's voice")
+        .font(.caption)
+        .foregroundStyle(.secondary)
+
+      HStack {
+        Text(appState.cosyVoice3SourceAudioDescription)
+          .font(.caption)
+          .foregroundStyle(appState.isCosyVoice3SourceAudioLoaded ? .primary : .secondary)
+        Spacer()
+        Button("Choose File") {
+          showFilePicker = true
+        }
+        .buttonStyle(.bordered)
+        .disabled(isLoading)
+      }
+
+      if let errorMessage {
+        Text(errorMessage)
+          .font(.caption)
+          .foregroundStyle(.red)
+      }
+    }
+    .fileImporter(
+      isPresented: $showFilePicker,
+      allowedContentTypes: [.audio],
+      allowsMultipleSelection: false
+    ) { result in
+      Task {
+        await handleFileSelection(result)
+      }
+    }
+  }
+
+  private func handleFileSelection(_ result: Result<[URL], Error>) async {
+    do {
+      let urls = try result.get()
+      guard let url = urls.first else { return }
+
+      isLoading = true
+      errorMessage = nil
+
+      // Start accessing the security-scoped resource
+      guard url.startAccessingSecurityScopedResource() else {
+        throw FileAccessError(message: "Unable to access the selected file")
+      }
+      defer { url.stopAccessingSecurityScopedResource() }
+
+      try await appState.prepareCosyVoice3SourceAudio(from: url)
       isLoading = false
     } catch {
       isLoading = false

@@ -11,9 +11,9 @@ import MLXNN
 
 // MARK: - Speaker
 
-/// Prepared speaker profile for CosyVoice2 TTS
+/// Prepared speaker profile for CosyVoice3 TTS
 ///
-/// Create using `CosyVoice2Engine.prepareSpeaker(from:)` methods.
+/// Create using `CosyVoice3Engine.prepareSpeaker(from:)` methods.
 /// Can be reused across multiple `say()` or `generate()` calls for efficient multi-speaker scenarios.
 ///
 /// If the speaker has a transcription, zero-shot mode is used automatically for better voice alignment.
@@ -27,9 +27,9 @@ import MLXNN
 /// // With style instruction
 /// try await engine.say("Hello world", speaker: speaker, instruction: "Speak slowly and calmly")
 /// ```
-public struct CosyVoice2Speaker: Sendable {
+public struct CosyVoice3Speaker: Sendable {
   /// The pre-computed conditionals for generation
-  let conditionals: CosyVoice2Conditionals
+  let conditionals: CosyVoice3Conditionals
 
   /// Sample rate of the original reference audio
   public let sampleRate: Int
@@ -47,7 +47,7 @@ public struct CosyVoice2Speaker: Sendable {
   public let transcription: String?
 
   init(
-    conditionals: CosyVoice2Conditionals,
+    conditionals: CosyVoice3Conditionals,
     sampleRate: Int,
     sampleCount: Int,
     description: String,
@@ -64,25 +64,25 @@ public struct CosyVoice2Speaker: Sendable {
 
 /// Default reference audio URL - LibriVox public domain reading
 /// "The Dead Boche" by Robert Graves, ~38 seconds (public domain)
-public let cosyVoice2DefaultReferenceAudioURL = URL(
+public let cosyVoice3DefaultReferenceAudioURL = URL(
   string:
   "https://archive.org/download/short_poetry_001_librivox/dead_boche_graves_sm.mp3"
 )!
 
-// MARK: - CosyVoice2 Engine
+// MARK: - CosyVoice3 Engine
 
-/// CosyVoice2 TTS engine - Voice matching with zero-shot and cross-lingual modes
+/// CosyVoice3 TTS engine - Voice matching with DiT-based flow matching
 ///
-/// CosyVoice2 is a state-of-the-art TTS model that supports:
+/// CosyVoice3 is a state-of-the-art TTS model that supports:
 /// - **Zero-shot voice matching**: Match any voice with just a few seconds of reference audio
 /// - **Cross-lingual synthesis**: Generate speech in different languages while preserving voice characteristics
 /// - **High-quality output**: 24kHz audio with natural prosody
 @Observable
 @MainActor
-public final class CosyVoice2Engine: TTSEngine {
+public final class CosyVoice3Engine: TTSEngine {
   // MARK: - TTSEngine Protocol Properties
 
-  public let provider: TTSProvider = .cosyVoice2
+  public let provider: TTSProvider = .cosyVoice3
   public let streamingGranularity: StreamingGranularity = .sentence
   public private(set) var isLoaded: Bool = false
   public private(set) var isGenerating: Bool = false
@@ -90,33 +90,22 @@ public final class CosyVoice2Engine: TTSEngine {
   public private(set) var lastGeneratedAudioURL: URL?
   public private(set) var generationTime: TimeInterval = 0
 
-  // MARK: - CosyVoice2-Specific Properties
+  // MARK: - CosyVoice3-Specific Properties
 
-  /// Generation mode for CosyVoice2
-  ///
-  /// CosyVoice2 supports 4 inference modes:
-  /// - **Voice Conversion**: Converts source audio to target speaker voice (no text generation)
-  /// - **Zero-shot**: Uses reference audio + transcription for semantic alignment
-  /// - **Cross-lingual**: Uses reference audio only (works across languages)
-  /// - **Instruct**: Uses style instructions to control speech generation
+  /// Generation mode for CosyVoice3
   public enum GenerationMode: String, CaseIterable, Sendable {
     /// Cross-lingual: Uses speaker embedding only (no reference text needed)
-    /// Good for synthesizing text in a different language than the reference.
     case crossLingual = "Cross-lingual"
 
     /// Zero-shot: Uses reference text for better voice alignment
-    /// Requires transcription of the reference audio for semantic alignment.
     case zeroShot = "Zero-shot"
 
     /// Instruct: Uses style instructions to control speech generation
-    /// e.g., "Speak slowly and calmly", "Read with excitement"
     case instruct = "Instruct"
 
     /// Voice Conversion: Converts source audio to target speaker voice
-    /// Requires source audio to be converted.
     case voiceConversion = "Voice Conversion"
 
-    /// Short description of the mode
     public var description: String {
       switch self {
         case .crossLingual:
@@ -134,7 +123,7 @@ public final class CosyVoice2Engine: TTSEngine {
   /// Current generation mode
   public var generationMode: GenerationMode = .crossLingual
 
-  /// Style instruction for instruct mode (e.g., "Speak slowly and calmly")
+  /// Style instruction for instruct mode
   public var instructText: String = ""
 
   /// Top-K sampling parameter for LLM
@@ -154,56 +143,57 @@ public final class CosyVoice2Engine: TTSEngine {
 
   // MARK: - Private Properties
 
-  @ObservationIgnored private var cosyVoice2TTS: CosyVoice2TTS?
-  @ObservationIgnored private var s3Tokenizer: S3TokenizerV2?
+  @ObservationIgnored private var cosyVoice3TTS: CosyVoice3TTS?
+  @ObservationIgnored private var s3Tokenizer: S3TokenizerV3?
   @ObservationIgnored private var whisperSTT: WhisperSTT?
   @ObservationIgnored private let playback = TTSPlaybackController(sampleRate: 24000)
-  @ObservationIgnored private var defaultSpeaker: CosyVoice2Speaker?
+  @ObservationIgnored private var defaultSpeaker: CosyVoice3Speaker?
+  @ObservationIgnored private var cachedSourceAudioURL: URL?
 
   /// HuggingFace repo ID for S3 tokenizer
-  private static let s3TokenizerRepoId = "mlx-community/S3TokenizerV2"
+  private static let s3TokenizerRepoId = "mlx-community/S3TokenizerV3"
 
   // MARK: - Initialization
 
   public init() {
-    Log.tts.debug("CosyVoice2Engine initialized")
+    Log.tts.debug("CosyVoice3Engine initialized")
   }
 
   // MARK: - TTSEngine Protocol Methods
 
   public func load(progressHandler: (@Sendable (Progress) -> Void)?) async throws {
     guard !isLoaded else {
-      Log.tts.debug("CosyVoice2Engine already loaded")
+      Log.tts.debug("CosyVoice3Engine already loaded")
       return
     }
 
-    Log.model.info("Loading CosyVoice2 TTS model...")
+    Log.model.info("Loading CosyVoice3 TTS model...")
 
     do {
-      // Load CosyVoice2 model
-      cosyVoice2TTS = try await CosyVoice2TTS.load(
+      // Load CosyVoice3 model
+      cosyVoice3TTS = try await CosyVoice3TTS.load(
         progressHandler: progressHandler ?? { _ in }
       )
 
-      // Load S3TokenizerV2
-      Log.model.info("Loading S3TokenizerV2...")
+      // Load S3TokenizerV3
+      Log.model.info("Loading S3TokenizerV3...")
       s3Tokenizer = try await Self.loadS3Tokenizer()
 
       isLoaded = true
-      Log.model.info("CosyVoice2 TTS model loaded successfully")
+      Log.model.info("CosyVoice3 TTS model loaded successfully")
     } catch {
-      Log.model.error("Failed to load CosyVoice2 model: \(error.localizedDescription)")
+      Log.model.error("Failed to load CosyVoice3 model: \(error.localizedDescription)")
       throw TTSError.modelLoadFailed(underlying: error)
     }
   }
 
-  /// Load S3TokenizerV2 from HuggingFace
-  private static func loadS3Tokenizer() async throws -> S3TokenizerV2 {
+  /// Load S3TokenizerV3 from HuggingFace
+  private static func loadS3Tokenizer() async throws -> S3TokenizerV3 {
     let modelDirectory = try await HubConfiguration.shared.snapshot(from: s3TokenizerRepoId)
     let weightURL = modelDirectory.appendingPathComponent("model.safetensors")
     let weights = try MLX.loadArrays(url: weightURL)
 
-    let tokenizer = S3TokenizerV2()
+    let tokenizer = S3TokenizerV3()
 
     // Load weights into tokenizer
     let parameters = ModuleParameters.unflattened(weights)
@@ -233,23 +223,11 @@ public final class CosyVoice2Engine: TTSEngine {
   }
 
   /// Transcribe audio using Whisper
-  ///
-  /// - Parameters:
-  ///   - samples: Audio samples at any sample rate
-  ///   - sampleRate: Sample rate of the audio
-  /// - Returns: Transcribed text
   public func transcribe(samples: [Float], sampleRate: Int) async throws -> String {
     let result = try await transcribeWithTimestamps(samples: samples, sampleRate: sampleRate, wordTimestamps: false)
     return result.text
   }
 
-  /// Transcribe audio using Whisper with optional word timestamps
-  ///
-  /// - Parameters:
-  ///   - samples: Audio samples at any sample rate
-  ///   - sampleRate: Sample rate of the audio
-  ///   - wordTimestamps: Whether to include word-level timestamps
-  /// - Returns: Transcription result with optional word timings
   private func transcribeWithTimestamps(
     samples: [Float],
     sampleRate: Int,
@@ -268,7 +246,7 @@ public final class CosyVoice2Engine: TTSEngine {
     let audio = MLXArray(resampledSamples)
     let result = await whisper.transcribe(
       audio: audio,
-      language: nil, // Auto-detect
+      language: nil,
       task: .transcribe,
       temperature: 0.0,
       timestamps: wordTimestamps ? .word : .segment,
@@ -284,24 +262,19 @@ public final class CosyVoice2Engine: TTSEngine {
       setGenerating: { self.isGenerating = $0 },
       setPlaying: { self.isPlaying = $0 }
     )
-    Log.tts.debug("CosyVoice2Engine stopped")
+    Log.tts.debug("CosyVoice3Engine stopped")
   }
 
   public func unload() async {
     await stop()
-
-    // Clear model but preserve prepared reference audio (expensive to recompute)
-    cosyVoice2TTS = nil
+    cosyVoice3TTS = nil
     s3Tokenizer = nil
     isLoaded = false
-
-    Log.tts.debug("CosyVoice2Engine unloaded (reference audio preserved)")
+    Log.tts.debug("CosyVoice3Engine unloaded (reference audio preserved)")
   }
 
   public func cleanup() async throws {
     await unload()
-
-    // Also clear prepared speaker
     defaultSpeaker = nil
   }
 
@@ -323,18 +296,16 @@ public final class CosyVoice2Engine: TTSEngine {
   public func prepareSpeaker(
     from url: URL,
     transcription: String? = nil
-  ) async throws -> CosyVoice2Speaker {
+  ) async throws -> CosyVoice3Speaker {
     if !isLoaded {
       try await load()
     }
 
-    guard let cosyVoice2TTS, let s3Tokenizer else {
+    guard let cosyVoice3TTS, let s3Tokenizer else {
       throw TTSError.modelNotLoaded
     }
 
     let (samples, sampleRate) = try await loadAudioSamples(from: url)
-
-    // Description will be updated with transcription status in prepareSpeakerFromSamples
     let baseDescription = url.lastPathComponent
 
     return try await prepareSpeakerFromSamples(
@@ -342,29 +313,22 @@ public final class CosyVoice2Engine: TTSEngine {
       sampleRate: sampleRate,
       transcription: transcription,
       baseDescription: baseDescription,
-      tts: cosyVoice2TTS,
+      tts: cosyVoice3TTS,
       tokenizer: s3Tokenizer
     )
   }
 
   /// Prepare a speaker profile from raw samples
-  ///
-  /// - Parameters:
-  ///   - samples: Audio samples as Float array
-  ///   - sampleRate: Sample rate of the audio
-  ///   - transcription: Optional transcription of the reference audio (enables zero-shot mode).
-  ///                    If nil and `autoTranscribe` is true, Whisper will be used to transcribe.
-  /// - Returns: Prepared speaker ready for generation
   public func prepareSpeaker(
     from samples: [Float],
     sampleRate: Int,
     transcription: String? = nil
-  ) async throws -> CosyVoice2Speaker {
+  ) async throws -> CosyVoice3Speaker {
     if !isLoaded {
       try await load()
     }
 
-    guard let cosyVoice2TTS, let s3Tokenizer else {
+    guard let cosyVoice3TTS, let s3Tokenizer else {
       throw TTSError.modelNotLoaded
     }
 
@@ -376,34 +340,31 @@ public final class CosyVoice2Engine: TTSEngine {
       sampleRate: sampleRate,
       transcription: transcription,
       baseDescription: baseDescription,
-      tts: cosyVoice2TTS,
+      tts: cosyVoice3TTS,
       tokenizer: s3Tokenizer
     )
   }
 
   /// Prepare the default speaker (LibriVox public domain sample)
-  ///
-  /// - Parameter transcription: Optional transcription of the default audio
-  /// - Returns: Prepared speaker ready for generation
   public func prepareDefaultSpeaker(
     transcription: String? = nil
-  ) async throws -> CosyVoice2Speaker {
-    try await prepareSpeaker(from: cosyVoice2DefaultReferenceAudioURL, transcription: transcription)
+  ) async throws -> CosyVoice3Speaker {
+    try await prepareSpeaker(from: cosyVoice3DefaultReferenceAudioURL, transcription: transcription)
   }
 
-  // MARK: - Private Audio Loading
+  // MARK: - Private Speaker Preparation
 
   private func prepareSpeakerFromSamples(
     _ samples: [Float],
     sampleRate: Int,
     transcription: String?,
     baseDescription: String,
-    tts: CosyVoice2TTS,
-    tokenizer: S3TokenizerV2
-  ) async throws -> CosyVoice2Speaker {
+    tts: CosyVoice3TTS,
+    tokenizer: S3TokenizerV3
+  ) async throws -> CosyVoice3Speaker {
     Log.tts.debug("Preparing speaker: \(baseDescription)")
 
-    // Resample to 24kHz if needed (CosyVoice2 expects 24kHz)
+    // Resample to 24kHz if needed
     let targetSampleRate = 24000
     var processedSamples: [Float] = if sampleRate != targetSampleRate {
       resampleAudio(samples, fromRate: sampleRate, toRate: targetSampleRate)
@@ -414,8 +375,7 @@ public final class CosyVoice2Engine: TTSEngine {
     let originalDuration = Float(processedSamples.count) / Float(targetSampleRate)
     Log.tts.debug("Original reference audio duration: \(originalDuration)s")
 
-    // Step 1: Trim silence from beginning and end (matching Python implementation)
-    // This uses top_db=60 like the Python librosa.effects.trim call
+    // Trim silence
     processedSamples = AudioTrimmer.trimSilence(
       processedSamples,
       sampleRate: targetSampleRate,
@@ -425,7 +385,7 @@ public final class CosyVoice2Engine: TTSEngine {
     let silenceTrimmedDuration = Float(processedSamples.count) / Float(targetSampleRate)
     Log.tts.debug("After silence trimming: \(silenceTrimmedDuration)s")
 
-    // Step 2: Handle max duration (30 seconds for CosyVoice2)
+    // Handle max duration (30 seconds)
     let maxDuration: Float = 30.0
     let maxSamples = Int(maxDuration) * targetSampleRate
 
@@ -433,10 +393,7 @@ public final class CosyVoice2Engine: TTSEngine {
     var clippedAtWordBoundary = false
 
     if processedSamples.count > maxSamples {
-      // Audio exceeds max duration - need to clip
       if autoTranscribe {
-        // Use word-boundary clipping for best results
-        // Transcribe with word timestamps to find safe clip point
         Log.tts.debug("Audio exceeds \(maxDuration)s, using word-boundary clipping...")
 
         let result = try await transcribeWithTimestamps(
@@ -445,54 +402,42 @@ public final class CosyVoice2Engine: TTSEngine {
           wordTimestamps: true
         )
 
-        // Collect all words from all segments
         var allWords = result.segments.flatMap { $0.words ?? [] }
 
         if !allWords.isEmpty {
-          // Drop unreliable trailing words (potential hallucinations)
           allWords = AudioTrimmer.dropUnreliableTrailingWords(
             allWords,
             audioDuration: silenceTrimmedDuration,
             config: .cosyVoice2
           )
 
-          // Find clip point at word boundary
           if let (clipSample, validWords) = AudioTrimmer.findWordBoundaryClipPoint(
             words: allWords,
             maxDuration: maxDuration,
             sampleRate: targetSampleRate
           ) {
             processedSamples = Array(processedSamples.prefix(clipSample))
-            // Whisper word tokens include leading spaces, so trim the result
             finalTranscription = validWords.map(\.word).joined().trimmingCharacters(in: .whitespaces)
             clippedAtWordBoundary = true
             let newDuration = Float(processedSamples.count) / Float(targetSampleRate)
-            Log.tts.debug("Clipped at word boundary: \(newDuration)s, transcription: \(finalTranscription ?? "")")
+            Log.tts.debug("Clipped at word boundary: \(newDuration)s")
           } else {
-            // Fallback: simple truncation
             processedSamples = Array(processedSamples.prefix(maxSamples))
-            Log.tts.debug("No valid word boundary found, using simple truncation to \(maxDuration)s")
           }
         } else {
-          // No words detected - simple truncation
           processedSamples = Array(processedSamples.prefix(maxSamples))
-          Log.tts.debug("No words detected, using simple truncation to \(maxDuration)s")
         }
       } else {
-        // No auto-transcribe - simple truncation
         processedSamples = Array(processedSamples.prefix(maxSamples))
-        Log.tts.debug("Truncated reference audio to \(maxDuration) seconds")
       }
     }
 
-    // Auto-transcribe if enabled and no transcription yet
-    // IMPORTANT: Transcribe AFTER clipping so the transcription matches the final audio
+    // Auto-transcribe if enabled
     if finalTranscription == nil, autoTranscribe, !clippedAtWordBoundary {
-      Log.tts.debug("Auto-transcribing reference audio (after clipping)...")
+      Log.tts.debug("Auto-transcribing reference audio...")
       finalTranscription = try await transcribe(samples: processedSamples, sampleRate: targetSampleRate)
     }
 
-    // Always trim whitespace from transcription before passing to model
     finalTranscription = finalTranscription?.trimmingCharacters(in: .whitespacesAndNewlines)
     if finalTranscription?.isEmpty == true {
       finalTranscription = nil
@@ -500,7 +445,6 @@ public final class CosyVoice2Engine: TTSEngine {
 
     let refWav = MLXArray(processedSamples)
 
-    // Create a sendable wrapper for the tokenizer
     nonisolated(unsafe) let tokenizerUnsafe = tokenizer
 
     let conditionals = await tts.prepareConditionals(
@@ -515,7 +459,7 @@ public final class CosyVoice2Engine: TTSEngine {
 
     Log.tts.debug("Speaker prepared: \(description)")
 
-    return CosyVoice2Speaker(
+    return CosyVoice3Speaker(
       conditionals: conditionals,
       sampleRate: targetSampleRate,
       sampleCount: processedSamples.count,
@@ -524,11 +468,10 @@ public final class CosyVoice2Engine: TTSEngine {
     )
   }
 
-  /// Simple audio resampling using linear interpolation
+  // MARK: - Audio Loading Helpers
+
   private func resampleAudio(_ samples: [Float], fromRate: Int, toRate: Int) -> [Float] {
-    if fromRate == toRate {
-      return samples
-    }
+    if fromRate == toRate { return samples }
 
     let ratio = Float(toRate) / Float(fromRate)
     let newLength = Int(Float(samples.count) * ratio)
@@ -564,7 +507,6 @@ public final class CosyVoice2Engine: TTSEngine {
       throw TTSError.invalidArgument("Failed to download reference audio from URL")
     }
 
-    // Save to temporary file and load
     let tempURL = FileManager.default.temporaryDirectory
       .appendingPathComponent(UUID().uuidString)
       .appendingPathExtension(url.pathExtension.isEmpty ? "mp3" : url.pathExtension)
@@ -592,12 +534,10 @@ public final class CosyVoice2Engine: TTSEngine {
       throw TTSError.invalidArgument("Failed to read audio data")
     }
 
-    // Convert to mono if stereo
     let samples: [Float]
     if format.channelCount == 1 {
       samples = Array(UnsafeBufferPointer(start: floatData[0], count: Int(buffer.frameLength)))
     } else {
-      // Mix stereo to mono
       let left = UnsafeBufferPointer(start: floatData[0], count: Int(buffer.frameLength))
       let right = UnsafeBufferPointer(start: floatData[1], count: Int(buffer.frameLength))
       samples = zip(left, right).map { ($0 + $1) / 2.0 }
@@ -611,29 +551,21 @@ public final class CosyVoice2Engine: TTSEngine {
   /// Generate audio from text
   ///
   /// Automatically selects zero-shot or cross-lingual mode based on whether the speaker
-  /// has a transcription. If the speaker has a transcription, zero-shot mode is used
-  /// for better voice alignment. Otherwise, cross-lingual mode is used.
-  ///
-  /// - Parameters:
-  ///   - text: The text to synthesize
-  ///   - speaker: Prepared speaker profile (if nil, uses default)
-  ///   - instruction: Optional style instruction (e.g., "Speak slowly and calmly")
-  /// - Returns: The generated audio result
+  /// has a transcription.
   public func generate(
     _ text: String,
-    speaker: CosyVoice2Speaker? = nil,
+    speaker: CosyVoice3Speaker? = nil,
     instruction: String? = nil
   ) async throws -> AudioResult {
     guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
       throw TTSError.invalidArgument("Text cannot be empty")
     }
 
-    // Auto-load if needed
     if !isLoaded {
       try await load()
     }
 
-    guard let cosyVoice2TTS else {
+    guard let cosyVoice3TTS else {
       throw TTSError.modelNotLoaded
     }
 
@@ -646,7 +578,7 @@ public final class CosyVoice2Engine: TTSEngine {
     }
 
     // Prepare speaker if needed
-    let spk: CosyVoice2Speaker
+    let spk: CosyVoice3Speaker
     if let speaker {
       spk = speaker
     } else {
@@ -657,19 +589,18 @@ public final class CosyVoice2Engine: TTSEngine {
     }
 
     // Tokenize input text
-    let textTokens = await cosyVoice2TTS.encode(text: text)
+    let textTokens = await cosyVoice3TTS.encode(text: text)
 
     // Generate based on mode or instruction
     let result: TTSGenerationResult
 
-    // Check for instruction parameter first
     let effectiveInstruction = instruction ?? (generationMode == .instruct ? instructText : nil)
 
     if let instruction = effectiveInstruction,
        !instruction.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     {
       // Instruct mode
-      result = try await cosyVoice2TTS.generateInstruct(
+      result = try await cosyVoice3TTS.generateInstruct(
         text: text,
         textTokens: textTokens,
         instructText: instruction,
@@ -682,8 +613,8 @@ public final class CosyVoice2Engine: TTSEngine {
         "Voice conversion requires source audio. Use convertVoice(from:to:) instead."
       )
     } else if spk.hasTranscription, generationMode != .crossLingual {
-      // Zero-shot mode (speaker has transcription)
-      result = try await cosyVoice2TTS.generateZeroShot(
+      // Zero-shot mode
+      result = try await cosyVoice3TTS.generateZeroShot(
         text: text,
         textTokens: textTokens,
         conditionals: spk.conditionals,
@@ -691,8 +622,8 @@ public final class CosyVoice2Engine: TTSEngine {
         nTimesteps: nTimesteps
       )
     } else {
-      // Cross-lingual mode (no transcription or explicitly set)
-      result = try await cosyVoice2TTS.generateCrossLingual(
+      // Cross-lingual mode
+      result = try await cosyVoice3TTS.generateCrossLingual(
         text: text,
         textTokens: textTokens,
         conditionals: spk.conditionals,
@@ -701,7 +632,7 @@ public final class CosyVoice2Engine: TTSEngine {
       )
     }
 
-    Log.tts.timing("CosyVoice2 generation", duration: result.processingTime)
+    Log.tts.timing("CosyVoice3 generation", duration: result.processingTime)
     lastGeneratedAudioURL = playback.saveAudioFile(samples: result.audio, sampleRate: result.sampleRate)
 
     return .samples(
@@ -712,14 +643,9 @@ public final class CosyVoice2Engine: TTSEngine {
   }
 
   /// Generate and immediately play audio
-  ///
-  /// - Parameters:
-  ///   - text: The text to synthesize
-  ///   - speaker: Prepared speaker profile (if nil, uses default)
-  ///   - instruction: Optional style instruction (e.g., "Speak slowly and calmly")
   public func say(
     _ text: String,
-    speaker: CosyVoice2Speaker? = nil,
+    speaker: CosyVoice3Speaker? = nil,
     instruction: String? = nil
   ) async throws {
     let audio = try await generate(text, speaker: speaker, instruction: instruction)
@@ -729,24 +655,15 @@ public final class CosyVoice2Engine: TTSEngine {
   // MARK: - Voice Conversion
 
   /// Convert source audio to target speaker's voice
-  ///
-  /// This is a one-step voice conversion that loads the source audio and converts it
-  /// to sound like the target speaker.
-  ///
-  /// - Parameters:
-  ///   - sourceURL: URL to source audio file (the audio to convert)
-  ///   - speaker: Target speaker profile (if nil, uses default)
-  /// - Returns: Generated audio result in the target speaker's voice
   public func convertVoice(
     from sourceURL: URL,
-    to speaker: CosyVoice2Speaker? = nil
+    to speaker: CosyVoice3Speaker? = nil
   ) async throws -> AudioResult {
-    // Auto-load if needed
     if !isLoaded {
       try await load()
     }
 
-    guard let cosyVoice2TTS, let s3Tokenizer else {
+    guard let cosyVoice3TTS, let s3Tokenizer else {
       throw TTSError.modelNotLoaded
     }
 
@@ -758,7 +675,6 @@ public final class CosyVoice2Engine: TTSEngine {
       generationTime = CFAbsoluteTimeGetCurrent() - startTime
     }
 
-    // Load and prepare source audio
     let (samples, sampleRate) = try await loadAudioSamples(from: sourceURL)
 
     let targetSampleRate = 24000
@@ -772,13 +688,12 @@ public final class CosyVoice2Engine: TTSEngine {
 
     nonisolated(unsafe) let tokenizerUnsafe = s3Tokenizer
     nonisolated(unsafe) let sourceWavUnsafe = sourceWav
-    await cosyVoice2TTS.prepareSourceAudioForVC(
+    await cosyVoice3TTS.prepareSourceAudioForVC(
       audio: sourceWavUnsafe,
       s3Tokenizer: { mel, melLen in tokenizerUnsafe(mel, melLen: melLen) }
     )
 
-    // Prepare speaker if needed
-    let spk: CosyVoice2Speaker
+    let spk: CosyVoice3Speaker
     if let speaker {
       spk = speaker
     } else {
@@ -788,12 +703,12 @@ public final class CosyVoice2Engine: TTSEngine {
       spk = defaultSpeaker!
     }
 
-    let result = try await cosyVoice2TTS.generateVoiceConversionFromPrepared(
+    let result = try await cosyVoice3TTS.generateVoiceConversionFromPrepared(
       conditionals: spk.conditionals,
       nTimesteps: nTimesteps
     )
 
-    Log.tts.timing("CosyVoice2 voice conversion", duration: result.processingTime)
+    Log.tts.timing("CosyVoice3 voice conversion", duration: result.processingTime)
     lastGeneratedAudioURL = playback.saveAudioFile(samples: result.audio, sampleRate: result.sampleRate)
 
     return .samples(
@@ -803,123 +718,49 @@ public final class CosyVoice2Engine: TTSEngine {
     )
   }
 
-  /// Prepare source audio for voice conversion (for UI-driven workflows)
+  /// Prepare source audio for voice conversion (caches URL for later use)
   ///
-  /// Call this to pre-load source audio, then use `generateVoiceConversion(speaker:)`.
-  /// For simple one-step conversion, use `convertVoice(from:to:)` instead.
-  ///
-  /// - Parameter url: URL to source audio file
+  /// - Parameter url: URL to source audio file (local or remote)
   public func prepareSourceAudio(from url: URL) async throws {
-    if !isLoaded {
-      try await load()
-    }
+    // Validate the audio can be loaded
+    _ = try await loadAudioSamples(from: url)
 
-    guard let cosyVoice2TTS, let s3Tokenizer else {
-      throw TTSError.modelNotLoaded
-    }
-
-    let (samples, sampleRate) = try await loadAudioSamples(from: url)
-
-    let targetSampleRate = 24000
-    let resampledSamples: [Float] = if sampleRate != targetSampleRate {
-      resampleAudio(samples, fromRate: sampleRate, toRate: targetSampleRate)
-    } else {
-      samples
-    }
-
-    let sourceWav = MLXArray(resampledSamples)
-
-    nonisolated(unsafe) let tokenizerUnsafe = s3Tokenizer
-    nonisolated(unsafe) let sourceWavUnsafe = sourceWav
-    await cosyVoice2TTS.prepareSourceAudioForVC(
-      audio: sourceWavUnsafe,
-      s3Tokenizer: { mel, melLen in tokenizerUnsafe(mel, melLen: melLen) }
-    )
-
+    cachedSourceAudioURL = url
     isSourceAudioLoaded = true
-    let duration = Double(resampledSamples.count) / Double(targetSampleRate)
-    sourceAudioDescription = String(format: "%@ (%.1fs)", url.lastPathComponent, duration)
+    sourceAudioDescription = url.lastPathComponent
 
-    Log.tts.debug("Source audio prepared")
+    Log.tts.debug("Prepared source audio for voice conversion: \(url.lastPathComponent)")
   }
 
-  /// Clear source audio
+  /// Clear cached source audio
   public func clearSourceAudio() async {
-    await cosyVoice2TTS?.clearSourceAudio()
+    cachedSourceAudioURL = nil
     isSourceAudioLoaded = false
     sourceAudioDescription = "No source audio"
+
+    Log.tts.debug("Cleared source audio for voice conversion")
   }
 
-  /// Generate voice conversion from pre-loaded source audio
+  /// Generate voice conversion using cached source audio
   ///
-  /// Requires `prepareSourceAudio(from:)` to be called first.
-  /// For simple one-step conversion, use `convertVoice(from:to:)` instead.
-  ///
-  /// - Parameter speaker: Target speaker profile (if nil, uses default)
-  /// - Returns: Generated audio result
+  /// - Parameter speaker: Target speaker (uses default if nil)
+  /// - Returns: Converted audio result
   public func generateVoiceConversion(
-    speaker: CosyVoice2Speaker? = nil
+    speaker: CosyVoice3Speaker? = nil
   ) async throws -> AudioResult {
-    guard isSourceAudioLoaded else {
-      throw TTSError.invalidArgument("Voice conversion requires source audio. Call prepareSourceAudio(from:) first, or use convertVoice(from:to:).")
+    guard let sourceURL = cachedSourceAudioURL else {
+      throw TTSError.invalidArgument("No source audio prepared. Call prepareSourceAudio(from:) first.")
     }
 
-    // Auto-load if needed
-    if !isLoaded {
-      try await load()
-    }
-
-    guard let cosyVoice2TTS else {
-      throw TTSError.modelNotLoaded
-    }
-
-    isGenerating = true
-    let startTime = CFAbsoluteTimeGetCurrent()
-
-    defer {
-      isGenerating = false
-      generationTime = CFAbsoluteTimeGetCurrent() - startTime
-    }
-
-    // Prepare speaker if needed
-    let spk: CosyVoice2Speaker
-    if let speaker {
-      spk = speaker
-    } else {
-      if defaultSpeaker == nil {
-        defaultSpeaker = try await prepareDefaultSpeaker()
-      }
-      spk = defaultSpeaker!
-    }
-
-    let result = try await cosyVoice2TTS.generateVoiceConversionFromPrepared(
-      conditionals: spk.conditionals,
-      nTimesteps: nTimesteps
-    )
-
-    Log.tts.timing("CosyVoice2 voice conversion", duration: result.processingTime)
-    lastGeneratedAudioURL = playback.saveAudioFile(samples: result.audio, sampleRate: result.sampleRate)
-
-    return .samples(
-      data: result.audio,
-      sampleRate: result.sampleRate,
-      processingTime: result.processingTime
-    )
+    return try await convertVoice(from: sourceURL, to: speaker)
   }
 
   // MARK: - Streaming
 
   /// Generate audio as a stream of chunks
-  ///
-  /// Note: CosyVoice2 generates audio sentence-by-sentence for streaming.
-  ///
-  /// - Parameters:
-  ///   - text: The text to synthesize
-  ///   - speaker: Prepared speaker profile (if nil, uses default)
-  /// - Returns: An async stream of audio chunks
   public func generateStreaming(
     _ text: String,
-    speaker: CosyVoice2Speaker? = nil
+    speaker: CosyVoice3Speaker? = nil
   ) -> AsyncThrowingStream<AudioChunk, Error> {
     let trimmedText = text.trimmingCharacters(in: .whitespacesAndNewlines)
 
@@ -928,8 +769,6 @@ public final class CosyVoice2Engine: TTSEngine {
     }
 
     let sampleRate = 24000
-
-    // Capture current parameter values
     let currentSampling = sampling
     let currentNTimesteps = nTimesteps
     let currentGenerationMode = generationMode
@@ -942,17 +781,15 @@ public final class CosyVoice2Engine: TTSEngine {
         return AsyncThrowingStream { $0.finish() }
       }
 
-      // Auto-load if needed
       if !isLoaded {
         try await load()
       }
 
-      guard let cosyVoice2TTS else {
+      guard let cosyVoice3TTS else {
         throw TTSError.modelNotLoaded
       }
 
-      // Prepare speaker if needed
-      let spk: CosyVoice2Speaker
+      let spk: CosyVoice3Speaker
       if let speaker {
         spk = speaker
       } else {
@@ -962,7 +799,6 @@ public final class CosyVoice2Engine: TTSEngine {
         spk = defaultSpeaker!
       }
 
-      // Split text into sentences for streaming
       let sentences = Self.splitIntoSentences(trimmedText)
 
       let startTime = Date()
@@ -972,11 +808,11 @@ public final class CosyVoice2Engine: TTSEngine {
             for sentence in sentences {
               guard !Task.isCancelled else { break }
 
-              let textTokens = await cosyVoice2TTS.encode(text: sentence)
+              let textTokens = await cosyVoice3TTS.encode(text: sentence)
               let useZeroShot = spk.hasTranscription && currentGenerationMode != .crossLingual
 
               let result: TTSGenerationResult = if useZeroShot {
-                try await cosyVoice2TTS.generateZeroShot(
+                try await cosyVoice3TTS.generateZeroShot(
                   text: sentence,
                   textTokens: textTokens,
                   conditionals: spk.conditionals,
@@ -984,7 +820,7 @@ public final class CosyVoice2Engine: TTSEngine {
                   nTimesteps: currentNTimesteps
                 )
               } else {
-                try await cosyVoice2TTS.generateCrossLingual(
+                try await cosyVoice3TTS.generateCrossLingual(
                   text: sentence,
                   textTokens: textTokens,
                   conditionals: spk.conditionals,
@@ -1011,10 +847,8 @@ public final class CosyVoice2Engine: TTSEngine {
     }
   }
 
-  /// Split text into sentences for streaming
   private static func splitIntoSentences(_ text: String) -> [String] {
-    // Simple sentence splitting on common punctuation
-    let pattern = #"[.!?。！？]+\s*"#
+    let pattern = #"[.!?]+\s*"#
     let regex = try? NSRegularExpression(pattern: pattern, options: [])
     let nsText = text as NSString
     let matches = regex?.matches(in: text, options: [], range: NSRange(location: 0, length: nsText.length)) ?? []
@@ -1031,7 +865,6 @@ public final class CosyVoice2Engine: TTSEngine {
       lastEnd = match.range.location + match.range.length
     }
 
-    // Add remaining text if any
     if lastEnd < nsText.length {
       let remaining = nsText.substring(from: lastEnd).trimmingCharacters(in: .whitespaces)
       if !remaining.isEmpty {
@@ -1039,7 +872,6 @@ public final class CosyVoice2Engine: TTSEngine {
       }
     }
 
-    // If no sentences found, return the whole text
     if sentences.isEmpty, !text.isEmpty {
       sentences.append(text)
     }
@@ -1047,14 +879,11 @@ public final class CosyVoice2Engine: TTSEngine {
     return sentences
   }
 
-  /// Play audio with streaming (plays as chunks arrive)
-  /// - Parameters:
-  ///   - text: The text to synthesize
-  ///   - speaker: Prepared speaker profile (if nil, uses default)
+  /// Play audio with streaming
   @discardableResult
   public func sayStreaming(
     _ text: String,
-    speaker: CosyVoice2Speaker? = nil
+    speaker: CosyVoice3Speaker? = nil
   ) async throws -> AudioResult {
     let (samples, processingTime) = try await playback.playStream(
       generateStreaming(text, speaker: speaker),

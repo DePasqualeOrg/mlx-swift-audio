@@ -648,3 +648,218 @@ class S3TokenizerV2: Module {
     return (code, codeLen)
   }
 }
+
+// MARK: - S3TokenizerV3
+
+/// S3 tokenizer V3 implementation
+/// V3 is architecturally identical to V2, but with 12 transformer blocks instead of 6.
+/// Used by CosyVoice3 for speech tokenization.
+class S3TokenizerV3: Module {
+  let config: S3TokenizerV3ModelConfig
+
+  @ModuleInfo(key: "encoder") var encoder: AudioEncoderV2
+  @ModuleInfo(key: "quantizer") var quantizer: FSQVectorQuantization
+
+  init(name _: String = "speech_tokenizer_v3", config: S3TokenizerV3ModelConfig = S3TokenizerV3ModelConfig()) {
+    self.config = config
+
+    _encoder.wrappedValue = AudioEncoderV2(
+      nMels: config.nMels,
+      nState: config.nAudioState,
+      nHead: config.nAudioHead,
+      nLayer: config.nAudioLayer, // 12 layers for V3
+      stride: 2
+    )
+    _quantizer.wrappedValue = FSQVectorQuantization(
+      dim: config.nAudioState,
+      codebookSize: config.nCodebookSize
+    )
+  }
+
+  func callAsFunction(_ mel: MLXArray, melLen: MLXArray) -> (MLXArray, MLXArray) {
+    quantize(mel: mel, melLen: melLen)
+  }
+
+  /// Quantize mel spectrogram to tokens
+  func quantize(mel: MLXArray, melLen: MLXArray) -> (MLXArray, MLXArray) {
+    // Check if any audio exceeds 30 seconds
+    // At 16kHz with hop_length=160: 30s = 3000 frames
+    let maxFrames = 3000
+    let longAudioMask = melLen .> maxFrames
+
+    if MLX.any(longAudioMask).item(Bool.self) {
+      // Has long audio - need special processing
+      return quantizeMixedBatch(
+        mel: mel,
+        melLen: melLen,
+        longAudioMask: longAudioMask,
+        maxFrames: maxFrames
+      )
+    } else {
+      // All short audio - use simple path
+      let (hidden, codeLen) = encoder(mel, xLen: melLen)
+      let code = quantizer.encode(hidden)
+      return (code, codeLen)
+    }
+  }
+
+  /// Handle mixed batch with both short and long audio
+  private func quantizeMixedBatch(
+    mel: MLXArray,
+    melLen: MLXArray,
+    longAudioMask: MLXArray,
+    maxFrames _: Int
+  ) -> (MLXArray, MLXArray) {
+    let batchSize = mel.shape[0]
+
+    // Sliding window parameters
+    let sampleRate = 16000
+    let hopLength = 160
+    let windowSize = 30 // seconds
+    let overlap = 4 // seconds
+
+    let framesPerWindow = windowSize * sampleRate / hopLength // 3000
+    let framesPerOverlap = overlap * sampleRate / hopLength // 400
+    let framesPerStride = framesPerWindow - framesPerOverlap // 2600
+
+    // Collect all segments
+    var allSegments: [MLXArray] = []
+    var allSegmentsLen: [Int] = []
+    var segmentInfo: [[String: Any]] = []
+
+    for batchIdx in 0 ..< batchSize {
+      let audioMel = mel[batchIdx]
+      let audioMelLen = Int(melLen[batchIdx].item(Int.self))
+      let isLongAudio = longAudioMask[batchIdx].item(Bool.self)
+
+      if !isLongAudio {
+        // Short audio: process as single segment
+        var segment = audioMel[0..., 0 ..< audioMelLen]
+        let segLen = audioMelLen
+
+        if segLen < framesPerWindow {
+          let padSize = framesPerWindow - segLen
+          segment = MLX.padded(segment, widths: [IntOrPair(0), IntOrPair((0, padSize))])
+        }
+
+        allSegments.append(segment)
+        allSegmentsLen.append(segLen)
+        segmentInfo.append([
+          "batch_idx": batchIdx,
+          "is_long_audio": false,
+          "segment_idx": 0,
+          "total_segments": 1,
+        ])
+      } else {
+        // Long audio: split into segments
+        var start = 0
+        var segmentIdx = 0
+        var segmentCount = 0
+
+        while start < audioMelLen {
+          let end = min(start + framesPerWindow, audioMelLen)
+          var segment = audioMel[0..., start ..< end]
+          let segLen = segment.shape[1]
+
+          if segLen < framesPerWindow {
+            let padSize = framesPerWindow - segLen
+            segment = MLX.padded(segment, widths: [IntOrPair(0), IntOrPair((0, padSize))])
+          }
+
+          allSegments.append(segment)
+          allSegmentsLen.append(segLen)
+          segmentInfo.append([
+            "batch_idx": batchIdx,
+            "is_long_audio": true,
+            "segment_idx": segmentIdx,
+            "total_segments": -1,
+          ])
+
+          segmentIdx += 1
+          segmentCount += 1
+          start += framesPerStride
+        }
+
+        // Update total_segments
+        for i in (segmentInfo.count - segmentCount) ..< segmentInfo.count {
+          segmentInfo[i]["total_segments"] = segmentCount
+        }
+      }
+    }
+
+    if allSegments.isEmpty {
+      return (
+        MLXArray.zeros([batchSize, 0]).asType(.int32),
+        MLXArray.zeros([batchSize]).asType(.int32)
+      )
+    }
+
+    // Process all segments
+    let unifiedBatchMel = MLX.stacked(allSegments)
+    let unifiedBatchLens = MLXArray(allSegmentsLen.map { Int32($0) })
+
+    let (hidden, codeLen) = encoder(unifiedBatchMel, xLen: unifiedBatchLens)
+    let codes = quantizer.encode(hidden)
+
+    // Reorganize results
+    var results: [Int: Any] = [:]
+
+    for (segIdx, info) in segmentInfo.enumerated() {
+      let batchIdx = info["batch_idx"] as! Int
+      let isLongAudio = info["is_long_audio"] as! Bool
+
+      let segCodeLen = Int(codeLen[segIdx].item(Int.self))
+      let segmentCode = codes[segIdx, 0 ..< segCodeLen]
+      let segmentCodeList = (0 ..< segCodeLen).map { Int(segmentCode[$0].item(Int32.self)) }
+
+      if !isLongAudio {
+        results[batchIdx] = (MLXArray(segmentCodeList.map { Int32($0) }), segmentCodeList.count)
+      } else {
+        var existing = (results[batchIdx] as? [[Int]]) ?? []
+        existing.append(segmentCodeList)
+        results[batchIdx] = existing
+      }
+    }
+
+    // Merge long audio segments
+    for batchIdx in 0 ..< batchSize {
+      if longAudioMask[batchIdx].item(Bool.self) {
+        let audioCodes = results[batchIdx] as! [[Int]]
+        let tokenRate = 25 // V3 uses 25Hz like V2
+        let mergedCodes = mergeTokenizedSegments(audioCodes, overlap: overlap, tokenRate: tokenRate)
+        results[batchIdx] = (MLXArray(mergedCodes.map { Int32($0) }), mergedCodes.count)
+      }
+    }
+
+    // Build output
+    var maxCodeLen = 0
+    for batchIdx in 0 ..< batchSize {
+      let (_, len) = results[batchIdx] as! (MLXArray, Int)
+      maxCodeLen = max(maxCodeLen, len)
+    }
+
+    var outputList: [MLXArray] = []
+    var lenList: [Int32] = []
+
+    for batchIdx in 0 ..< batchSize {
+      var (codeTensor, codeLenVal) = results[batchIdx] as! (MLXArray, Int)
+      if codeTensor.shape[0] < maxCodeLen {
+        codeTensor = MLX.padded(codeTensor, widths: [IntOrPair((0, maxCodeLen - codeTensor.shape[0]))])
+      }
+      outputList.append(codeTensor)
+      lenList.append(Int32(codeLenVal))
+    }
+
+    let outputCodes = MLX.stacked(outputList)
+    let outputCodesLen = MLXArray(lenList)
+
+    return (outputCodes, outputCodesLen)
+  }
+
+  /// Simple quantization without long audio handling
+  func quantizeSimple(mel: MLXArray, melLen: MLXArray) -> (MLXArray, MLXArray) {
+    let (hidden, codeLen) = encoder(mel, xLen: melLen)
+    let code = quantizer.encode(hidden)
+    return (code, codeLen)
+  }
+}

@@ -393,7 +393,7 @@ public final class OuteTTSEngine: TTSEngine {
   private func transcribeAudio(url: URL) async throws -> (text: String, words: [(word: String, start: Double, end: Double)]) {
     // Load Whisper engine if needed
     if whisperEngine == nil {
-      whisperEngine = WhisperEngine(modelSize: .base, quantization: .q4)
+      whisperEngine = WhisperEngine(modelSize: .largeTurbo, quantization: .q4)
     }
 
     guard let whisper = whisperEngine else {

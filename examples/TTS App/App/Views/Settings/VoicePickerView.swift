@@ -22,6 +22,8 @@ struct VoicePickerView: View {
         EmptyView()
       case .cosyVoice2:
         EmptyView()
+      case .cosyVoice3:
+        EmptyView()
     }
   }
 }

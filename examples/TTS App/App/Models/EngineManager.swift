@@ -17,6 +17,7 @@ final class EngineManager {
   private(set) var outeTTSEngine = OuteTTSEngine()
   private(set) var chatterboxEngine = ChatterboxEngine()
   private(set) var cosyVoice2Engine = CosyVoice2Engine()
+  private(set) var cosyVoice3Engine = CosyVoice3Engine()
 
   // MARK: - State
 
@@ -53,6 +54,11 @@ final class EngineManager {
   /// Prepared speaker for CosyVoice2 (enables fast speaker switching)
   var cosyVoice2Speaker: CosyVoice2Speaker?
 
+  // MARK: - CosyVoice3 Speaker
+
+  /// Prepared speaker for CosyVoice3 (enables fast speaker switching)
+  var cosyVoice3Speaker: CosyVoice3Speaker?
+
   // MARK: - Computed Properties
 
   var currentEngine: any TTSEngine {
@@ -63,6 +69,7 @@ final class EngineManager {
       case .outetts: outeTTSEngine
       case .chatterbox: chatterboxEngine
       case .cosyVoice2: cosyVoice2Engine
+      case .cosyVoice3: cosyVoice3Engine
     }
   }
 
@@ -126,6 +133,11 @@ final class EngineManager {
         cosyVoice2Speaker = try await cosyVoice2Engine.prepareDefaultSpeaker()
       }
 
+      // CosyVoice3-specific: load default speaker if needed
+      if selectedProvider == .cosyVoice3, cosyVoice3Speaker == nil {
+        cosyVoice3Speaker = try await cosyVoice3Engine.prepareDefaultSpeaker()
+      }
+
       isLoading = false
       loadingProgress = 1.0
     } catch {
@@ -164,6 +176,13 @@ final class EngineManager {
           } else {
             return try await cosyVoice2Engine.generate(text, speaker: cosyVoice2Speaker)
           }
+        case .cosyVoice3:
+          // Handle voice conversion mode specially
+          if cosyVoice3Engine.generationMode == .voiceConversion {
+            return try await cosyVoice3Engine.generateVoiceConversion(speaker: cosyVoice3Speaker)
+          } else {
+            return try await cosyVoice3Engine.generate(text, speaker: cosyVoice3Speaker)
+          }
       }
     } catch is CancellationError {
       throw CancellationError()
@@ -189,6 +208,8 @@ final class EngineManager {
         chatterboxEngine.generateStreaming(text, referenceAudio: chatterboxReferenceAudio)
       case .cosyVoice2:
         cosyVoice2Engine.generateStreaming(text, speaker: cosyVoice2Speaker)
+      case .cosyVoice3:
+        cosyVoice3Engine.generateStreaming(text, speaker: cosyVoice3Speaker)
     }
   }
 
@@ -210,6 +231,8 @@ final class EngineManager {
           return try await chatterboxEngine.sayStreaming(text, referenceAudio: chatterboxReferenceAudio)
         case .cosyVoice2:
           return try await cosyVoice2Engine.sayStreaming(text, speaker: cosyVoice2Speaker)
+        case .cosyVoice3:
+          return try await cosyVoice3Engine.sayStreaming(text, speaker: cosyVoice3Speaker)
       }
     } catch is CancellationError {
       throw CancellationError()

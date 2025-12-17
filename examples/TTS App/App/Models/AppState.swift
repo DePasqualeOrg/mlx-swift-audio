@@ -327,6 +327,89 @@ extension AppState {
   }
 }
 
+// MARK: - CosyVoice3 Speaker
+
+extension AppState {
+  /// Current prepared speaker for CosyVoice3
+  var cosyVoice3Speaker: CosyVoice3Speaker? {
+    get { engineManager.cosyVoice3Speaker }
+    set { engineManager.cosyVoice3Speaker = newValue }
+  }
+
+  /// Whether speaker is prepared for CosyVoice3
+  var isCosyVoice3SpeakerLoaded: Bool {
+    engineManager.cosyVoice3Speaker != nil
+  }
+
+  /// Description of current speaker
+  var cosyVoice3SpeakerDescription: String {
+    engineManager.cosyVoice3Speaker?.description ?? "No speaker"
+  }
+
+  /// Prepare speaker from a URL (local file or remote)
+  func prepareCosyVoice3Speaker(from url: URL, transcription: String? = nil) async throws {
+    let speaker = try await engineManager.cosyVoice3Engine.prepareSpeaker(from: url, transcription: transcription)
+    engineManager.cosyVoice3Speaker = speaker
+  }
+
+  /// Prepare the default speaker
+  func prepareDefaultCosyVoice3Speaker() async throws {
+    let speaker = try await engineManager.cosyVoice3Engine.prepareDefaultSpeaker()
+    engineManager.cosyVoice3Speaker = speaker
+  }
+
+  /// Generation mode for CosyVoice3
+  var cosyVoice3GenerationMode: CosyVoice3Engine.GenerationMode {
+    get { engineManager.cosyVoice3Engine.generationMode }
+    set { engineManager.cosyVoice3Engine.generationMode = newValue }
+  }
+
+  /// Instruct text for CosyVoice3 instruct mode
+  var cosyVoice3InstructText: String {
+    get { engineManager.cosyVoice3Engine.instructText }
+    set { engineManager.cosyVoice3Engine.instructText = newValue }
+  }
+
+  /// Sampling parameter for CosyVoice3
+  var cosyVoice3Sampling: Int {
+    get { engineManager.cosyVoice3Engine.sampling }
+    set { engineManager.cosyVoice3Engine.sampling = newValue }
+  }
+
+  /// Number of flow matching timesteps for CosyVoice3
+  var cosyVoice3NTimesteps: Int {
+    get { engineManager.cosyVoice3Engine.nTimesteps }
+    set { engineManager.cosyVoice3Engine.nTimesteps = newValue }
+  }
+
+  /// Whether source audio is loaded for voice conversion
+  var isCosyVoice3SourceAudioLoaded: Bool {
+    engineManager.cosyVoice3Engine.isSourceAudioLoaded
+  }
+
+  /// Description of the loaded source audio
+  var cosyVoice3SourceAudioDescription: String {
+    engineManager.cosyVoice3Engine.sourceAudioDescription
+  }
+
+  /// Prepare source audio for voice conversion
+  func prepareCosyVoice3SourceAudio(from url: URL) async throws {
+    try await engineManager.cosyVoice3Engine.prepareSourceAudio(from: url)
+  }
+
+  /// Clear source audio
+  func clearCosyVoice3SourceAudio() async {
+    await engineManager.cosyVoice3Engine.clearSourceAudio()
+  }
+
+  /// Generate voice conversion
+  func generateCosyVoice3VoiceConversion() async throws -> AudioResult {
+    try await engineManager.cosyVoice3Engine.generateVoiceConversion(
+      speaker: engineManager.cosyVoice3Speaker
+    )
+  }
+}
+
 // MARK: - OuteTTS Speaker Profile
 
 extension AppState {

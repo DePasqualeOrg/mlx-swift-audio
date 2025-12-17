@@ -381,11 +381,7 @@ public final class FunASREngine: STTEngine {
     let frameCount = AVAudioFrameCount(audioFile.length)
 
     guard let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: frameCount) else {
-      throw STTError.audioLoadFailed(underlying: NSError(
-        domain: "FunASREngine",
-        code: -1,
-        userInfo: [NSLocalizedDescriptionKey: "Failed to create audio buffer"]
-      ))
+      throw STTError.invalidAudio("Failed to create audio buffer")
     }
 
     try audioFile.read(into: buffer)
@@ -415,11 +411,7 @@ public final class FunASREngine: STTEngine {
         }
       }
     } else {
-      throw STTError.audioLoadFailed(underlying: NSError(
-        domain: "FunASREngine",
-        code: -2,
-        userInfo: [NSLocalizedDescriptionKey: "Audio buffer has no float data"]
-      ))
+      throw STTError.invalidAudio("Audio buffer has no float data")
     }
 
     return (MLXArray(audioSamples), sampleRate)

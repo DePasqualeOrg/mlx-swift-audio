@@ -11,14 +11,9 @@ struct WhisperTests {
   @Test @MainActor func whisperModelVariantsTranscribe() async throws {
     print("Testing representative Whisper model variants...\n")
 
-    // Download test audio once
+    // Download test audio (cached)
     let audioURL = URL(string: "https://keithito.com/LJ-Speech-Dataset/LJ037-0171.wav")!
-    let (testAudioData, _) = try await URLSession.shared.data(from: audioURL)
-
-    let tempDir = FileManager.default.temporaryDirectory
-    let testAudioURL = tempDir.appendingPathComponent("test_whisper_variants.wav")
-    try testAudioData.write(to: testAudioURL)
-    defer { try? FileManager.default.removeItem(at: testAudioURL) }
+    let testAudioURL = try await TestAudioCache.downloadToFile(from: audioURL)
 
     let expectedText = "The examination and testimony of the experts enabled the commission to conclude that five shots may have been fired"
 
@@ -147,14 +142,9 @@ struct WhisperTests {
   @Test @MainActor func whisperWordTimestamps() async throws {
     print("Testing word-level timestamps...")
 
-    // Download test audio
+    // Download test audio (cached)
     let audioURL = URL(string: "https://keithito.com/LJ-Speech-Dataset/LJ037-0171.wav")!
-    let (testAudioData, _) = try await URLSession.shared.data(from: audioURL)
-
-    let tempDir = FileManager.default.temporaryDirectory
-    let testAudioURL = tempDir.appendingPathComponent("test_word_timestamps.wav")
-    try testAudioData.write(to: testAudioURL)
-    defer { try? FileManager.default.removeItem(at: testAudioURL) }
+    let testAudioURL = try await TestAudioCache.downloadToFile(from: audioURL)
 
     // Use base model for reliable word timestamps
     let engine = STT.whisper(model: .base, quantization: .q4)

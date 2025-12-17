@@ -17,7 +17,9 @@ extension TTSProvider {
       case .chatterbox:
         "TTS with reference audio support"
       case .cosyVoice2:
-        "Voice matching with zero-shot and cross-lingual modes"
+        "Voice matching with instruct mode and voice conversion"
+      case .cosyVoice3:
+        "Voice matching with instruct mode and voice conversion"
     }
   }
 
@@ -35,7 +37,9 @@ extension TTSProvider {
       case .chatterbox:
         "Chatterbox: TTS with reference audio support."
       case .cosyVoice2:
-        "CosyVoice2: Voice matching with 4 inference modes."
+        "CosyVoice 2: Voice matching with instruct mode and voice conversion."
+      case .cosyVoice3:
+        "CosyVoice 3: Voice matching with instruct mode and voice conversion."
     }
   }
 }

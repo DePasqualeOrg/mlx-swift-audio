@@ -39,6 +39,7 @@ public enum ChatterboxQuantization: String, Sendable, CaseIterable {
 /// Available TTS providers
 public enum TTSProvider: String, CaseIterable, Identifiable, Sendable {
   case cosyVoice2
+  case cosyVoice3
   case chatterbox
   case outetts
   case kokoro
@@ -52,7 +53,8 @@ public enum TTSProvider: String, CaseIterable, Identifiable, Sendable {
     switch self {
       case .outetts: "OuteTTS"
       case .chatterbox: "Chatterbox"
-      case .cosyVoice2: "CosyVoice2"
+      case .cosyVoice2: "CosyVoice 2"
+      case .cosyVoice3: "CosyVoice 3"
       default: rawValue.capitalized
     }
   }
@@ -95,7 +97,7 @@ public enum TTSProvider: String, CaseIterable, Identifiable, Sendable {
   /// Whether this provider supports reference audio
   public var supportsReferenceAudio: Bool {
     switch self {
-      case .outetts, .chatterbox, .cosyVoice2: true
+      case .outetts, .chatterbox, .cosyVoice2, .cosyVoice3: true
       default: false
     }
   }
@@ -103,7 +105,23 @@ public enum TTSProvider: String, CaseIterable, Identifiable, Sendable {
   /// Whether this provider supports reference text transcription (for zero-shot mode)
   public var supportsReferenceText: Bool {
     switch self {
-      case .cosyVoice2: true
+      case .cosyVoice2, .cosyVoice3: true
+      default: false
+    }
+  }
+
+  /// Whether this provider supports instruct mode for style control
+  public var supportsInstructMode: Bool {
+    switch self {
+      case .cosyVoice3: true
+      default: false
+    }
+  }
+
+  /// Whether this provider supports voice conversion
+  public var supportsVoiceConversion: Bool {
+    switch self {
+      case .cosyVoice3: true
       default: false
     }
   }

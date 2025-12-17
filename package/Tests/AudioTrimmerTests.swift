@@ -304,17 +304,10 @@ final class AudioTrimmerTests: XCTestCase {
   // These tests require network access and MLX/Metal
   // Run with: xcodebuild test -scheme mlx-audio-Package -destination 'platform=macOS' -only-testing:'MLXAudioTests/AudioTrimmerTests/testSilenceTrimmingWithRealAudio'
 
-  /// Helper to download audio file
+  /// Helper to download audio file (cached)
   private static func downloadAudio(from url: URL) async throws -> (samples: [Float], sampleRate: Int) {
-    print("Downloading audio from \(url.lastPathComponent)...")
-    let (data, _) = try await URLSession.shared.data(from: url)
-
-    // Save to temp file for AVAudioFile to read
-    let tempURL = FileManager.default.temporaryDirectory.appendingPathComponent("test_\(UUID().uuidString).wav")
-    try data.write(to: tempURL)
-    defer { try? FileManager.default.removeItem(at: tempURL) }
-
-    return try loadAudioFile(at: tempURL)
+    let cacheURL = try await TestAudioCache.downloadToFile(from: url)
+    return try loadAudioFile(at: cacheURL)
   }
 
   /// Helper to load audio file
@@ -324,13 +317,13 @@ final class AudioTrimmerTests: XCTestCase {
     let frameCount = AVAudioFrameCount(audioFile.length)
 
     guard let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: frameCount) else {
-      throw NSError(domain: "AudioTrimmerTests", code: 1, userInfo: [NSLocalizedDescriptionKey: "Failed to create buffer"])
+      throw TestError(message: "Failed to create buffer")
     }
 
     try audioFile.read(into: buffer)
 
     guard let floatData = buffer.floatChannelData else {
-      throw NSError(domain: "AudioTrimmerTests", code: 2, userInfo: [NSLocalizedDescriptionKey: "Failed to read audio data"])
+      throw TestError(message: "Failed to read audio data")
     }
 
     // Convert to mono if stereo

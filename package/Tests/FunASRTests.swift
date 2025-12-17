@@ -11,14 +11,9 @@ struct FunASRTests {
   @Test @MainActor func funASRBasicTranscribe() async throws {
     print("Testing Fun-ASR basic transcription...")
 
-    // Download test audio - same as Whisper tests for comparison
+    // Download test audio (cached) - same as Whisper tests for comparison
     let audioURL = URL(string: "https://keithito.com/LJ-Speech-Dataset/LJ037-0171.wav")!
-    let (testAudioData, _) = try await URLSession.shared.data(from: audioURL)
-
-    let tempDir = FileManager.default.temporaryDirectory
-    let testAudioURL = tempDir.appendingPathComponent("test_funasr.wav")
-    try testAudioData.write(to: testAudioURL)
-    defer { try? FileManager.default.removeItem(at: testAudioURL) }
+    let testAudioURL = try await TestAudioCache.downloadToFile(from: audioURL)
 
     let expectedText = "The examination and testimony of the experts enabled the commission to conclude that five shots may have been fired"
 
@@ -188,14 +183,9 @@ struct FunASRTests {
   @Test @MainActor func funASRAutoLanguageDetection() async throws {
     print("Testing Fun-ASR auto language detection...")
 
-    // Download test audio
+    // Download test audio (cached)
     let audioURL = URL(string: "https://keithito.com/LJ-Speech-Dataset/LJ037-0171.wav")!
-    let (testAudioData, _) = try await URLSession.shared.data(from: audioURL)
-
-    let tempDir = FileManager.default.temporaryDirectory
-    let testAudioURL = tempDir.appendingPathComponent("test_funasr_lang.wav")
-    try testAudioData.write(to: testAudioURL)
-    defer { try? FileManager.default.removeItem(at: testAudioURL) }
+    let testAudioURL = try await TestAudioCache.downloadToFile(from: audioURL)
 
     let engine = STT.funASR(variant: .nano4bit)
     try await engine.load()
@@ -216,14 +206,9 @@ struct FunASRTests {
   @Test @MainActor func funASRStreamingTranscription() async throws {
     print("Testing Fun-ASR streaming transcription...")
 
-    // Download test audio
+    // Download test audio (cached)
     let audioURL = URL(string: "https://keithito.com/LJ-Speech-Dataset/LJ037-0171.wav")!
-    let (testAudioData, _) = try await URLSession.shared.data(from: audioURL)
-
-    let tempDir = FileManager.default.temporaryDirectory
-    let testAudioURL = tempDir.appendingPathComponent("test_funasr_streaming.wav")
-    try testAudioData.write(to: testAudioURL)
-    defer { try? FileManager.default.removeItem(at: testAudioURL) }
+    let testAudioURL = try await TestAudioCache.downloadToFile(from: audioURL)
 
     let engine = STT.funASR(variant: .nano4bit)
     try await engine.load()

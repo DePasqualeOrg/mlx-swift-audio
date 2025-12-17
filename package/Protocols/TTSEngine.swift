@@ -104,6 +104,9 @@ public enum TTS {
 
   /// CosyVoice2: voice matching with zero-shot and cross-lingual modes
   public static func cosyVoice2() -> CosyVoice2Engine { CosyVoice2Engine() }
+
+  /// CosyVoice3: DiT-based voice matching with instruct mode and voice conversion
+  public static func cosyVoice3() -> CosyVoice3Engine { CosyVoice3Engine() }
 }
 
 /// Describes how an engine streams audio output

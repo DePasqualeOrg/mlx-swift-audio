@@ -233,36 +233,22 @@ struct ChatterboxBenchmark {
   // MARK: - Helpers
 
   private func downloadAndLoadAudio(from url: URL) async throws -> (samples: [Float], sampleRate: Int) {
-    // Download audio file
-    let (data, response) = try await URLSession.shared.data(from: url)
-
-    guard let httpResponse = response as? HTTPURLResponse,
-          (200 ... 299).contains(httpResponse.statusCode)
-    else {
-      throw NSError(domain: "ChatterboxBenchmark", code: 1, userInfo: [NSLocalizedDescriptionKey: "Failed to download audio"])
-    }
-
-    // Save to temporary file
-    let tempURL = FileManager.default.temporaryDirectory
-      .appendingPathComponent(UUID().uuidString)
-      .appendingPathExtension("mp3")
-
-    try data.write(to: tempURL)
-    defer { try? FileManager.default.removeItem(at: tempURL) }
+    // Download audio file (cached)
+    let fileURL = try await TestAudioCache.downloadToFile(from: url)
 
     // Load audio using AVFoundation
-    let audioFile = try AVAudioFile(forReading: tempURL)
+    let audioFile = try AVAudioFile(forReading: fileURL)
     let format = audioFile.processingFormat
     let frameCount = AVAudioFrameCount(audioFile.length)
 
     guard let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: frameCount) else {
-      throw NSError(domain: "ChatterboxBenchmark", code: 2, userInfo: [NSLocalizedDescriptionKey: "Failed to create audio buffer"])
+      throw TestError(message: "Failed to create audio buffer")
     }
 
     try audioFile.read(into: buffer)
 
     guard let floatData = buffer.floatChannelData else {
-      throw NSError(domain: "ChatterboxBenchmark", code: 3, userInfo: [NSLocalizedDescriptionKey: "Failed to read audio data"])
+      throw TestError(message: "Failed to read audio data")
     }
 
     let channelCount = Int(format.channelCount)
