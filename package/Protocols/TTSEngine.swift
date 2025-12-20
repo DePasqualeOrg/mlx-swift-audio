@@ -172,10 +172,10 @@ public struct TTSGenerationResult: Sendable {
   /// Time taken to generate the audio in seconds
   public let processingTime: TimeInterval
 
-  /// Real-time factor (duration / processingTime)
-  /// Values > 1 mean faster than real-time
+  /// Real-time factor (processingTime / duration)
+  /// Values < 1.0 mean faster than real-time
   public var realTimeFactor: Double {
-    processingTime > 0 ? duration / processingTime : 0
+    duration > 0 ? processingTime / duration : 0
   }
 
   public init(audio: [Float], sampleRate: Int, duration: TimeInterval, processingTime: TimeInterval) {
