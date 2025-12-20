@@ -1,9 +1,7 @@
-// Copyright © 2025 Resemble AI (original model implementation)
+// Copyright © 2023 Shivam Mehta (original model implementation)
 // Copyright © Anthony DePasquale (MLX port)
-// Ported to MLX from https://github.com/resemble-ai/chatterbox
-// License: licenses/chatterbox.txt
-
-//  Basic decoder components for flow matching
+// Ported to MLX from https://github.com/shivammehta25/Matcha-TTS
+// License: licenses/matcha.txt
 
 import Foundation
 import MLX
