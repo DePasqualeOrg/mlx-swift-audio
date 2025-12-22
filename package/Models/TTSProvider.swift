@@ -45,6 +45,7 @@ public enum TTSProvider: String, CaseIterable, Identifiable, Sendable {
   case kokoro
   case orpheus
   case marvis
+  case vibeVoice
 
   public var id: String { rawValue }
 
@@ -55,6 +56,7 @@ public enum TTSProvider: String, CaseIterable, Identifiable, Sendable {
       case .chatterbox: "Chatterbox"
       case .cosyVoice2: "CosyVoice 2"
       case .cosyVoice3: "CosyVoice 3"
+      case .vibeVoice: "VibeVoice"
       default: rawValue.capitalized
     }
   }
