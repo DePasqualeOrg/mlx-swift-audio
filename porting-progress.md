@@ -87,3 +87,22 @@ VibeVoice is a real-time streaming TTS model that uses a Qwen2-based language mo
 - Added MIT license file for VibeVoice
 - Added TTSProvider case for vibeVoice
 - Port complete and ready for testing
+
+### Round 4 (Detailed Line-by-Line Verification)
+- **Configuration structs**: All 4 config types verified - all defaults match Python exactly
+- **Language model**: RoPE, attention, MLP, decoder layers verified line-by-line
+  - Shape handling (1,L,D) → (1,L,1,D) for rotary embeddings confirmed correct
+  - All bias flags (Q/K/V=true, O=false, MLP=false) verified
+- **Acoustic tokenizer**: All convolution classes, Block1D, TokenizerDecoder verified
+  - Padding calculations, format transposes (B,C,T)↔(B,T,C) confirmed correct
+- **Diffusion head**: TimestepEmbedder, AdaLN modulation, FFN verified
+  - Sinusoidal embedding formula verified
+  - 3-way split (shift/scale/gate) and 2-way split (shift/scale) confirmed
+- **DPM-Solver scheduler**: Beta schedule, step logic, order determination verified
+  - v_prediction formula α*sample - σ*output confirmed correct
+  - First/second order update math verified against Python
+- **Main model**: Layer split, voice cache, generation loop verified
+  - CFG implementation confirmed correct
+  - Text/speech window sizes match constants
+
+**No issues found** - port matches Python MLX implementation exactly
