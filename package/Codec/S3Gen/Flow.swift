@@ -7,7 +7,6 @@
 
 import Foundation
 import MLX
-import MLXLinalg
 import MLXNN
 
 // MARK: - CausalMaskedDiffWithXvec

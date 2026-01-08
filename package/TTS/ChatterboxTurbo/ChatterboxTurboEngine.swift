@@ -403,20 +403,17 @@ public final class ChatterboxTurboEngine: TTSEngine {
       }
 
       // Prepare reference audio if needed
-      let ref: ChatterboxTurboReferenceAudio
-      if let referenceAudio {
-        ref = referenceAudio
-      } else {
-        if defaultReferenceAudio == nil {
-          defaultReferenceAudio = try await prepareDefaultReferenceAudio()
-        }
-        ref = defaultReferenceAudio!
+      if referenceAudio == nil, defaultReferenceAudio == nil {
+        defaultReferenceAudio = try await prepareDefaultReferenceAudio()
+      }
+      guard let referenceAudio = referenceAudio ?? defaultReferenceAudio else {
+        throw TTSError.modelNotLoaded
       }
 
       // Wrap model stream to convert [Float] -> AudioChunk
       let modelStream = await chatterboxTurboTTS.generateStreaming(
         text: trimmedText,
-        conditionals: ref.conditionals,
+        conditionals: referenceAudio.conditionals,
         temperature: currentTemperature,
         repetitionPenalty: currentRepetitionPenalty,
         topP: currentTopP,
