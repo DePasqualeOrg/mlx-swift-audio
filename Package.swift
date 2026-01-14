@@ -18,7 +18,7 @@ let package = Package(
   ],
   dependencies: [
     .package(url: "https://github.com/ml-explore/mlx-swift-lm", branch: "main"),
-    .package(url: "https://github.com/ml-explore/mlx-swift", revision: "9594dbe2736a6ba03fe0f11514d7265fd2f7ba77"),
+    .package(url: "https://github.com/ml-explore/mlx-swift", branch: "main"),
     .package(url: "https://github.com/huggingface/swift-transformers", .upToNextMinor(from: "1.1.0")),
     .package(url: "https://github.com/DePasqualeOrg/swift-tiktoken", branch: "main"),
     // espeak-ng is GPLv3 licensed - only linked when using Kokoro

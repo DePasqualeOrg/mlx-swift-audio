@@ -1,5 +1,5 @@
 {
-  "originHash" : "0c0be2fef355f3ba330468f9ed00357d8b7be8f0a6b51363ee89fd1060a76dc7",
+  "originHash" : "3d207c08b2662973091597c2ea3b8f7cb9296db397aa774641784eb7dc6ecebd",
   "pins" : [
     {
       "identity" : "espeak-ng-spm",
@@ -15,7 +15,8 @@
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/ml-explore/mlx-swift",
       "state" : {
-        "revision" : "9594dbe2736a6ba03fe0f11514d7265fd2f7ba77"
+        "branch" : "main",
+        "revision" : "b1e80760dab9070b27acd5cf355cc3d953800f75"
       }
     },
     {
