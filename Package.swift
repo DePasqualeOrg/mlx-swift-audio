@@ -32,6 +32,8 @@ let package = Package(
         .product(name: "MLXLMCommon", package: "mlx-swift-lm"),
         .product(name: "MLXLLM", package: "mlx-swift-lm"),
         .product(name: "MLXFFT", package: "mlx-swift"),
+        .product(name: "MLXRandom", package: "mlx-swift"),
+        .product(name: "MLXFast", package: "mlx-swift"),
         .product(name: "Transformers", package: "swift-transformers"),
         .product(name: "SwiftTiktoken", package: "swift-tiktoken"),
       ],

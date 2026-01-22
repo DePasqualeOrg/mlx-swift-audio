@@ -141,6 +141,23 @@ class ChatterboxModel: Module {
   /// Base Hugging Face repository name for Chatterbox TTS
   private static let baseRepoName = "Chatterbox-TTS"
 
+  /// Get Hugging Face repository ID for Chatterbox-Multilingual (23 languages)
+  ///
+  /// Uses litmudoc's pre-converted MLX models.
+  ///
+  /// - Parameter quantization: The quantization level (default: q8)
+  /// - Returns: The HuggingFace repository ID for multilingual model
+  static func multilingualRepoId(quantization: ChatterboxQuantization = .q8) -> String {
+    switch quantization {
+    case .fp16:
+      return "litmudoc/Chatterbox-Multilingual-MLX-v2-fp16"
+    case .q8:
+      return "litmudoc/Chatterbox-Multilingual-MLX-v2-Q8"
+    case .q4:
+      return "litmudoc/Chatterbox-Multilingual-MLX-v2-Q4"
+    }
+  }
+
   /// Hugging Face repository for S3TokenizerV2 (shared across TTS models)
   static let s3TokenizerRepoId = "mlx-community/S3TokenizerV2"
 
@@ -349,16 +366,17 @@ class ChatterboxModel: Module {
   ///
   /// - Parameters:
   ///   - quantization: Quantization level (fp16, 8bit, 4bit). Default is 4bit.
+  ///   - repoId: Custom HuggingFace repository ID. If nil, uses default based on quantization.
   ///   - s3TokenizerRepoId: Hugging Face repository ID for S3Tokenizer (default: mlx-community/S3TokenizerV2)
   ///   - progressHandler: Optional callback for download progress
   /// - Returns: Initialized ChatterboxModel with loaded weights
   static func load(
     quantization: ChatterboxQuantization = .q4,
+    repoId customRepoId: String? = nil,
     s3TokenizerRepoId: String = s3TokenizerRepoId,
     progressHandler: @escaping @Sendable (Progress) -> Void = { _ in },
   ) async throws -> ChatterboxModel {
-    let repoId = repoId(quantization: quantization)
-
+    let repoId = customRepoId ?? repoId(quantization: quantization)
     // Download both repos in parallel
     Log.model.info("Loading Chatterbox (\(quantization.rawValue)) from \(repoId) and S3Tokenizer from \(s3TokenizerRepoId)...")
 
@@ -426,6 +444,27 @@ class ChatterboxModel: Module {
     Log.model.info("Chatterbox TTS model (\(quantization.rawValue)) loaded successfully")
 
     return model
+  }
+
+  /// Load Chatterbox-Multilingual TTS model from Hugging Face Hub
+  ///
+  /// Convenience function to load the multilingual model (23 languages).
+  ///
+  /// - Parameters:
+  ///   - quantization: Quantization level (fp16, 8bit, 4bit). Default is 8bit.
+  ///   - progressHandler: Optional callback for download progress
+  /// - Returns: Initialized ChatterboxModel with multilingual weights
+  static func loadMultilingual(
+    quantization: ChatterboxQuantization = .q8,
+    progressHandler: @escaping @Sendable (Progress) -> Void = { _ in },
+  ) async throws -> ChatterboxModel {
+    let repoId = multilingualRepoId(quantization: quantization)
+    Log.model.info("Loading Chatterbox-Multilingual (\(quantization.rawValue))...")
+    return try await load(
+      quantization: quantization,
+      repoId: repoId,
+      progressHandler: progressHandler
+    )
   }
 
   /// Prepare conditioning from a reference audio clip
