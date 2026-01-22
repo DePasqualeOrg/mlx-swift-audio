@@ -47,6 +47,23 @@ actor ChatterboxTTS {
     return ChatterboxTTS(model: model)
   }
 
+  /// Load Chatterbox-Multilingual TTS from Hugging Face Hub
+  ///
+  /// - Parameters:
+  ///   - quantization: Quantization level (fp16, 8bit, 4bit). Default is 8bit.
+  ///   - progressHandler: Optional callback for download progress
+  /// - Returns: Initialized ChatterboxTTS instance with multilingual model
+  static func loadMultilingual(
+    quantization: ChatterboxQuantization = .q8,
+    progressHandler: @escaping @Sendable (Progress) -> Void = { _ in },
+  ) async throws -> ChatterboxTTS {
+    let model = try await ChatterboxModel.loadMultilingual(
+      quantization: quantization,
+      progressHandler: progressHandler,
+    )
+    return ChatterboxTTS(model: model)
+  }
+
   // MARK: - Conditionals
 
   /// Prepare conditioning from reference audio

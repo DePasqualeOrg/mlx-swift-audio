@@ -71,6 +71,9 @@ public final class ChatterboxEngine: TTSEngine {
   /// Quantization level
   public let quantization: ChatterboxQuantization
 
+  /// Whether to use multilingual model (23 languages) instead of English-only
+  public let isMultilingual: Bool
+
   /// Temperature for sampling (higher = more variation)
   public var temperature: Float = 0.8
 
@@ -100,7 +103,8 @@ public final class ChatterboxEngine: TTSEngine {
 
   // MARK: - Initialization
 
-  public init(quantization: ChatterboxQuantization = .q4) {
+  public init(quantization: ChatterboxQuantization = .q4, multilingual: Bool = false) {
+    self.isMultilingual = multilingual
     self.quantization = quantization
     Log.tts.debug("ChatterboxEngine initialized with quantization: \(quantization.rawValue)")
   }
@@ -114,13 +118,22 @@ public final class ChatterboxEngine: TTSEngine {
     }
 
     let quantization = quantization
-    Log.model.info("Loading Chatterbox TTS model (\(quantization.rawValue))...")
+    let multilingual = isMultilingual
+    let modelType = multilingual ? "Multilingual" : "English-only"
+    Log.model.info("Loading Chatterbox \(modelType) TTS model (\(quantization.rawValue))...")
 
     do {
-      chatterboxTTS = try await ChatterboxTTS.load(
-        quantization: quantization,
-        progressHandler: progressHandler ?? { _ in },
-      )
+      if multilingual {
+        chatterboxTTS = try await ChatterboxTTS.loadMultilingual(
+          quantization: quantization,
+          progressHandler: progressHandler ?? { _ in },
+        )
+      } else {
+        chatterboxTTS = try await ChatterboxTTS.load(
+          quantization: quantization,
+          progressHandler: progressHandler ?? { _ in },
+        )
+      }
 
       isLoaded = true
       Log.model.info("Chatterbox TTS model loaded successfully")
