@@ -236,11 +236,18 @@ class ChatterboxTurboModel: Module {
 
     // Check for quantized weights and apply quantization to matching layers
     let isQuantized = weights.keys.contains { $0.contains(".scales") }
-    if isQuantized {
+    let quantBits: Int? = {
+      switch quantization {
+        case .q8: return 8
+        case .q4: return 4
+        case .fp16: return nil
+      }
+    }()
+    if isQuantized, let quantBits {
       Log.model.info("Detected quantized ChatterboxTurbo weights")
       quantize(model: model) { path, _ in
         if weights["\(path).scales"] != nil {
-          return (64, 4, .affine)
+          return (64, quantBits, .affine)
         }
         return nil
       }
