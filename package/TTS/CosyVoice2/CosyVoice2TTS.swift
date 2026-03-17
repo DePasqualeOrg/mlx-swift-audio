@@ -155,7 +155,7 @@ actor CosyVoice2TTS {
     weights: [String: MLXArray]
   ) throws -> CosyVoice2Model {
     // Create Qwen2 config
-    var qwen2Config = Qwen2Config()
+    var qwen2Config = CosyVoiceQwen2Config()
     qwen2Config.hiddenSize = config.llm.hiddenSize
     qwen2Config.numHiddenLayers = config.llm.numHiddenLayers
     qwen2Config.intermediateSize = config.llm.intermediateSize
