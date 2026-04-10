@@ -769,7 +769,5 @@ func logMelSpectrogramCAMPPlus(
   sampleRate _: Int = 16000,
   numMelBins: Int = 128
 ) -> MLXArray {
-  // Use the Chatterbox log mel spectrogram which matches S3 tokenizer behavior
-  // It uses: n_fft=400, hop_length=160, slaney mel scale, and S3-style normalization
-  logMelSpectrogramChatterbox(audio: audio, nMels: numMelBins, padding: 0)
+  whisperLogMelSpectrogram(audio: audio, nMels: numMelBins, padding: 0).transposed(1, 0)
 }

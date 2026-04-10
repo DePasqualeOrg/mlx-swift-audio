@@ -131,6 +131,107 @@ struct CosyVoice3UnitTests {
     #expect(output.shape[1] == melDim)
     #expect(output.shape[2] == seqLen)
   }
+
+  /// Verify the local defaults still match the upstream CosyVoice3 reference config.
+  @Test func testCosyVoice3ReferenceDefaults() async throws {
+    let flowConfig = CosyVoice3FlowConfig()
+    #expect(flowConfig.inputSize == 80)
+    #expect(flowConfig.preLookaheadChannels == 1024)
+
+    let flowModule = CosyVoice3FlowModule()
+    #expect(flowModule.inputSize == 80)
+    #expect(flowModule.preLookaheadLayer.channels == 1024)
+
+    let causalFlow = CausalMaskedDiffWithDiT()
+    #expect(causalFlow.inputSize == 80)
+    #expect(causalFlow.preLookaheadLayer.channels == 1024)
+
+    #expect(CosyVoice3TTS.flowPromptMelFmax == 12000)
+  }
+
+  @Test func testCosyVoice3RasFallbackMasksRepeatedToken() async throws {
+    MLXRandom.seed(0)
+    let logits = MLXArray([Float32(0), Float32(10)])
+    let sampled = cosyVoice3RasSampling(
+      logits: logits,
+      decodedTokens: [1],
+      sampling: 25,
+      topP: 0.8,
+      topK: 2,
+      winSize: 1,
+      tauR: 1.0
+    )
+
+    #expect(sampled == 0)
+  }
+
+  @Test func testCosyVoice3StopMaskMatchesUpstream() async throws {
+    MLXRandom.seed(0)
+    let logits = MLXArray([Float32(-100), Float32(10), Float32(9)])
+    let sampled = try cosyVoice3SamplingWithEosRejection(
+      logits: logits,
+      decodedTokens: [],
+      sampling: 25,
+      speechTokenSize: 1,
+      ignoreEos: true,
+      topP: 0.8,
+      topK: 3,
+      winSize: 10,
+      tauR: 0.1
+    )
+
+    // Upstream only masks index `speech_token_size`, not the whole stop range.
+    #expect(sampled == 2)
+  }
+
+  @Test func testCosyVoice3EncodingPreservesEndOfPromptToken() async throws {
+    let tokens = CosyVoice3TTS.encodePreservingEndOfPrompt(
+      "You are a helpful assistant.<|endofprompt|>hello"
+    ) { plainText in
+      Array(plainText.utf8).map(Int.init)
+    }
+
+    let expectedPrefix = Array("You are a helpful assistant.".utf8).map(Int.init)
+    let expectedSuffix = Array("hello".utf8).map(Int.init)
+
+    #expect(tokens.starts(with: expectedPrefix))
+    #expect(tokens.contains(151_646))
+    #expect(tokens.suffix(expectedSuffix.count).elementsEqual(expectedSuffix))
+  }
+
+  @Test func testCosyVoice3RejectsLongReferenceAudio() async throws {
+    do {
+      try CosyVoice3Engine.validateReferenceDuration(sampleCount: 30 * 16000 + 1, sampleRate: 16000)
+      Issue.record("Expected long reference audio to be rejected")
+    } catch let TTSError.invalidArgument(message) {
+      #expect(message.contains("longer than 30 seconds"))
+    } catch {
+      Issue.record("Unexpected error: \(error)")
+    }
+  }
+
+  @Test func testCosyVoice3ZeroShotRequiresExplicitTranscription() async throws {
+    #expect(!CosyVoice3Engine.shouldUseZeroShot(
+      hasExplicitTranscription: false,
+      generationMode: .zeroShot,
+      hasInstruction: false
+    ))
+    #expect(CosyVoice3Engine.shouldUseZeroShot(
+      hasExplicitTranscription: true,
+      generationMode: .zeroShot,
+      hasInstruction: false
+    ))
+    #expect(!CosyVoice3Engine.shouldUseZeroShot(
+      hasExplicitTranscription: true,
+      generationMode: .crossLingual,
+      hasInstruction: false
+    ))
+    #expect(!CosyVoice3Engine.shouldUseZeroShot(
+      hasExplicitTranscription: true,
+      generationMode: .zeroShot,
+      hasInstruction: true
+    ))
+  }
 }
 
 // MARK: - End-to-End Integration Tests
@@ -371,7 +472,7 @@ struct CosyVoice3IntegrationTests {
 
     nonisolated(unsafe) let tokenizer = s3Tokenizer
     nonisolated(unsafe) let refAudioUnsafe = refAudio
-    let crossLingualConditionals = await tts.prepareConditionals(
+    let crossLingualConditionals = try await tts.prepareConditionals(
       refWav: refAudioUnsafe,
       refText: nil, // Cross-lingual mode
       s3Tokenizer: { mel, melLen in tokenizer(mel, melLen: melLen) }
@@ -410,7 +511,7 @@ struct CosyVoice3IntegrationTests {
     print("\n--- Test 2: Zero-Shot Mode ---")
     print("(Uses reference text for better voice alignment)")
 
-    let zeroShotConditionals = await tts.prepareConditionals(
+    let zeroShotConditionals = try await tts.prepareConditionals(
       refWav: refAudioUnsafe,
       refText: Self.referenceTranscription, // Zero-shot mode
       s3Tokenizer: { mel, melLen in tokenizer(mel, melLen: melLen) }

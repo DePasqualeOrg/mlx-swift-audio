@@ -475,6 +475,8 @@ class CosyVoice3Model: Module {
     promptMel: MLXArray,
     promptMelLen: MLXArray,
     speakerEmbedding: MLXArray,
+    llmPromptSpeechToken: MLXArray? = nil,
+    llmPromptSpeechTokenLen: MLXArray? = nil,
     sampling: Int = 25,
     nTimesteps: Int = 10,
     chunkSize: Int = 25,
@@ -494,8 +496,8 @@ class CosyVoice3Model: Module {
       textLen: textLen,
       promptText: promptText,
       promptTextLen: promptTextLen,
-      promptSpeechToken: promptSpeechToken,
-      promptSpeechTokenLen: promptSpeechTokenLen,
+      promptSpeechToken: llmPromptSpeechToken ?? promptSpeechToken,
+      promptSpeechTokenLen: llmPromptSpeechTokenLen ?? promptSpeechTokenLen,
       sampling: sampling,
       maxTokenTextRatio: maxTokenTextRatio,
       minTokenTextRatio: minTokenTextRatio
@@ -517,6 +519,7 @@ class CosyVoice3Model: Module {
       var speechOffset = 0
       var curSilentTokenNum = 0
       var finished = false
+      var currentChunkSize: Int
 
       let flow: CosyVoice3FlowModule
       let hifigan: CausalHiFTGenerator
@@ -526,6 +529,7 @@ class CosyVoice3Model: Module {
       let promptMelLen: MLXArray
       let speakerEmbedding: MLXArray
       let chunkSize: Int
+      let tokenMaxHopLen: Int
       let promptTokenPad: Int
       let filterSilentTokens: Bool
       let nTimesteps: Int
@@ -555,19 +559,23 @@ class CosyVoice3Model: Module {
         self.promptMelLen = promptMelLen
         self.speakerEmbedding = speakerEmbedding
         self.chunkSize = chunkSize
+        tokenMaxHopLen = chunkSize * 4
         self.promptTokenPad = promptTokenPad
         self.filterSilentTokens = filterSilentTokens
         self.nTimesteps = nTimesteps
         preLookaheadLen = flow.preLookaheadLen
         tokenMelRatio = flow.tokenMelRatio
+        currentChunkSize = chunkSize
       }
 
       func next() async throws -> MLXArray? {
         // If we've already finished, return nil
         if finished { return nil }
 
-        // Calculate current chunk size (first chunk includes padding)
-        let thisChunkSize = tokenOffset == 0 ? chunkSize + promptTokenPad : chunkSize
+        // Match the original PyTorch implementation's streaming behavior: grow
+        // the token hop size after each
+        // emitted chunk to reduce duplicate work.
+        let thisChunkSize = tokenOffset == 0 ? currentChunkSize + promptTokenPad : currentChunkSize
 
         // Keep consuming tokens until we have enough for a chunk
         // Matches PyTorch: len(tokens) - token_offset >= this_chunk_size + pre_lookahead_len
@@ -599,12 +607,13 @@ class CosyVoice3Model: Module {
         // We have enough tokens for an intermediate chunk
         let result = try processChunk(finalize: false)
         tokenOffset += thisChunkSize
+        currentChunkSize = min(tokenMaxHopLen, currentChunkSize * 2)
         return result
       }
 
       private func processChunk(finalize: Bool) throws -> MLXArray? {
         // Take all tokens up to current position + lookahead
-        let thisChunkSize = tokenOffset == 0 ? chunkSize + promptTokenPad : chunkSize
+        let thisChunkSize = tokenOffset == 0 ? currentChunkSize + promptTokenPad : currentChunkSize
         let endIdx = finalize ? speechTokens.count : tokenOffset + thisChunkSize + preLookaheadLen
         let chunkTokens = Array(speechTokens[0 ..< endIdx])
         let tokenArray = MLXArray(chunkTokens.map { Int32($0) }).reshaped(1, -1)
@@ -681,6 +690,8 @@ class CosyVoice3Model: Module {
     promptMel: MLXArray,
     promptMelLen: MLXArray,
     speakerEmbedding: MLXArray,
+    llmPromptSpeechToken: MLXArray? = nil,
+    llmPromptSpeechTokenLen: MLXArray? = nil,
     sampling: Int = 25,
     nTimesteps: Int = 10,
     chunkSize: Int = 25,
@@ -700,6 +711,8 @@ class CosyVoice3Model: Module {
       promptMel: promptMel,
       promptMelLen: promptMelLen,
       speakerEmbedding: speakerEmbedding,
+      llmPromptSpeechToken: llmPromptSpeechToken,
+      llmPromptSpeechTokenLen: llmPromptSpeechTokenLen,
       sampling: sampling,
       nTimesteps: nTimesteps,
       chunkSize: chunkSize,
@@ -748,7 +761,7 @@ class CosyVoice3FlowModule: Module {
   @ModuleInfo var decoder: CosyVoice3ConditionalCFM
 
   init(
-    inputSize: Int = 512,
+    inputSize: Int = 80,
     outputSize: Int = 80,
     spkEmbedDim: Int = 192,
     vocabSize: Int = 6561,
@@ -776,7 +789,7 @@ class CosyVoice3FlowModule: Module {
     } else {
       _preLookaheadLayer.wrappedValue = CosyVoice3PreLookaheadLayer(
         inChannels: inputSize,
-        channels: inputSize,
+        channels: 1024,
         preLookaheadLen: preLookaheadLen
       )
     }

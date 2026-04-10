@@ -183,7 +183,7 @@ public struct CosyVoice3LLMConfig: Codable, Sendable {
 
 /// Configuration for Flow Matching module (CosyVoice3 with DiT)
 public struct CosyVoice3FlowConfig: Codable, Sendable {
-  public var inputSize: Int = 512
+  public var inputSize: Int = 80
   public var outputSize: Int = 80
   public var spkEmbedDim: Int = 192
   public var outputType: String = "mel"
@@ -195,7 +195,7 @@ public struct CosyVoice3FlowConfig: Codable, Sendable {
   public var nTimesteps: Int = 10
 
   // PreLookaheadLayer config
-  public var preLookaheadChannels: Int = 512
+  public var preLookaheadChannels: Int = 1024
 
   // DiT config (embedded)
   public var dit: DiTConfig = .init()
@@ -227,7 +227,7 @@ public struct CosyVoice3FlowConfig: Codable, Sendable {
 
   public init(from decoder: Decoder) throws {
     let container = try decoder.container(keyedBy: CodingKeys.self)
-    inputSize = try container.decodeIfPresent(Int.self, forKey: .inputSize) ?? 512
+    inputSize = try container.decodeIfPresent(Int.self, forKey: .inputSize) ?? 80
     outputSize = try container.decodeIfPresent(Int.self, forKey: .outputSize) ?? 80
     spkEmbedDim = try container.decodeIfPresent(Int.self, forKey: .spkEmbedDim) ?? 192
     outputType = try container.decodeIfPresent(String.self, forKey: .outputType) ?? "mel"
@@ -237,7 +237,7 @@ public struct CosyVoice3FlowConfig: Codable, Sendable {
     tokenMelRatio = try container.decodeIfPresent(Int.self, forKey: .tokenMelRatio) ?? 2
     preLookaheadLen = try container.decodeIfPresent(Int.self, forKey: .preLookaheadLen) ?? 3
     nTimesteps = try container.decodeIfPresent(Int.self, forKey: .nTimesteps) ?? 10
-    preLookaheadChannels = try container.decodeIfPresent(Int.self, forKey: .preLookaheadChannels) ?? 512
+    preLookaheadChannels = try container.decodeIfPresent(Int.self, forKey: .preLookaheadChannels) ?? 1024
     dit = try container.decodeIfPresent(DiTConfig.self, forKey: .dit) ?? DiTConfig()
     cfmSigmaMin = try container.decodeIfPresent(Float.self, forKey: .cfmSigmaMin) ?? 1e-6
     cfmTScheduler = try container.decodeIfPresent(String.self, forKey: .cfmTScheduler) ?? "cosine"

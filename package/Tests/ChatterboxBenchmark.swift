@@ -3,7 +3,6 @@
 import AVFoundation
 import Foundation
 import MLX
-import MLXRandom
 import Testing
 
 @testable import MLXAudio

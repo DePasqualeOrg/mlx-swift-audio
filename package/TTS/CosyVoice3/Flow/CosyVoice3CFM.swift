@@ -272,7 +272,7 @@ class CausalMaskedDiffWithDiT: Module {
   @ModuleInfo var decoder: CosyVoice3ConditionalCFM?
 
   init(
-    inputSize: Int = 512,
+    inputSize: Int = 80,
     outputSize: Int = 80,
     spkEmbedDim: Int = 192,
     vocabSize: Int = 6561,
@@ -295,7 +295,7 @@ class CausalMaskedDiffWithDiT: Module {
     _spkEmbedAffineLayer.wrappedValue = Linear(spkEmbedDim, outputSize)
     _preLookaheadLayer.wrappedValue = preLookaheadLayer ?? CosyVoice3PreLookaheadLayer(
       inChannels: inputSize,
-      channels: inputSize,
+      channels: 1024,
       preLookaheadLen: preLookaheadLen
     )
     _decoder.wrappedValue = decoder
@@ -395,7 +395,7 @@ class CausalMaskedDiffWithDiT: Module {
 
 /// Build the complete flow model for CosyVoice3
 func buildCosyVoice3FlowModel(
-  inputSize: Int = 512,
+  inputSize: Int = 80,
   outputSize: Int = 80,
   spkEmbedDim: Int = 192,
   vocabSize: Int = 6561,

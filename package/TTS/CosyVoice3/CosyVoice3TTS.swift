@@ -33,11 +33,20 @@ actor CosyVoice3TTS {
   /// Maximum character count for a single chunk
   private static let maxChunkCharacters = 300
 
+  /// Maximum supported prompt/reference duration in the standard frontend from
+  /// the original PyTorch implementation. See
+  /// `cosyvoice/cli/frontend.py:_extract_speech_token`.
+  private static let maxReferenceDurationSeconds = 30
+
+  /// The original PyTorch implementation uses `fmax=None`, which resolves to
+  /// Nyquist at 24 kHz.
+  static let flowPromptMelFmax = CosyVoice3Constants.sampleRate / 2
+
   /// Token ID for <|endofprompt|> special token
   private static let endOfPromptTokenId: Int = 151_646
 
   /// CosyVoice3 requires a system prompt prefix in all text inputs.
-  /// The format varies by mode (see upstream example.py).
+  /// The format varies by mode (see the original PyTorch `example.py`).
   private static let systemPrefix = "You are a helpful assistant.<|endofprompt|>"
   private static let instructPrefix = "You are a helpful assistant. "
   private static let endOfPromptMarker = "<|endofprompt|>"
@@ -331,23 +340,29 @@ actor CosyVoice3TTS {
   ///
   /// - Parameters:
   ///   - refWav: Reference audio waveform at 24kHz
-  ///   - refText: Optional transcription of reference audio (enables zero-shot mode)
+  ///   - refText: Optional explicit transcription of reference audio (enables zero-shot mode)
+  ///              and should correspond exactly to `refWav`.
   ///   - s3Tokenizer: S3 speech tokenizer
   /// - Returns: Pre-computed conditionals for generation
   func prepareConditionals(
     refWav: MLXArray,
+    refSampleRate: Int = CosyVoice3Constants.sampleRate,
     refText: String? = nil,
     s3Tokenizer: @Sendable @escaping (MLXArray, MLXArray) -> (MLXArray, MLXArray)
-  ) -> CosyVoice3Conditionals {
-    // Truncate to max 30 seconds
-    let maxSamples = 30 * Self.outputSampleRate
-    var audio = refWav
-    if audio.shape[0] > maxSamples {
-      audio = audio[0 ..< maxSamples]
-    }
+  ) throws -> CosyVoice3Conditionals {
+    try CosyVoice3Engine.validateReferenceDuration(sampleCount: refWav.shape[0], sampleRate: refSampleRate)
+    let audio = refWav
 
-    // Resample to 16kHz for tokenizer
-    let audio16k = resampleAudio(audio, fromRate: Self.outputSampleRate, toRate: Self.tokenizerSampleRate)
+    // Match the standard frontend path in the original PyTorch implementation in
+    // `cosyvoice/cli/frontend.py:frontend_zero_shot` by deriving the 24 kHz
+    // flow input and the 16 kHz tokenizer/speaker input directly from the same
+    // original reference clip, rather than from cascaded resamples.
+    let audio24k = refSampleRate == Self.outputSampleRate
+      ? audio
+      : resampleAudio(audio, fromRate: refSampleRate, toRate: Self.outputSampleRate)
+    let audio16k = refSampleRate == Self.tokenizerSampleRate
+      ? audio
+      : resampleAudio(audio, fromRate: refSampleRate, toRate: Self.tokenizerSampleRate)
 
     // Extract 128-mel for S3 tokenizer
     let mel128 = logMelSpectrogramCAMPPlus(audio: audio16k, sampleRate: Self.tokenizerSampleRate, numMelBins: 128)
@@ -358,7 +373,7 @@ actor CosyVoice3TTS {
     let (speechTokens, speechTokenLens) = s3Tokenizer(mel128Batched, mel128Len)
 
     // Extract 80-mel for flow model (at 24kHz)
-    let mel80 = computeMelSpectrogram80(audio: refWav)
+    let mel80 = computeMelSpectrogram80(audio: audio24k)
     let mel80Batched = mel80.expandedDimensions(axis: 0) // (1, T, D)
 
     // Align mel and token lengths
@@ -641,6 +656,8 @@ actor CosyVoice3TTS {
     // Cross-lingual mode: empty prompt text
     let emptyPromptText = MLXArray.zeros([1, 0], dtype: .int32)
     let emptyPromptTextLen = MLXArray([Int32(0)])
+    let emptyPromptSpeechToken = MLXArray.zeros([1, 0], dtype: .int32)
+    let emptyPromptSpeechTokenLen = MLXArray([Int32(0)])
 
     let modelStream = model.synthesizeStreaming(
       text: textArray,
@@ -652,6 +669,54 @@ actor CosyVoice3TTS {
       promptMel: conditionals.promptMel,
       promptMelLen: conditionals.promptMelLen,
       speakerEmbedding: conditionals.speakerEmbedding,
+      llmPromptSpeechToken: emptyPromptSpeechToken,
+      llmPromptSpeechTokenLen: emptyPromptSpeechTokenLen,
+      sampling: sampling,
+      nTimesteps: nTimesteps,
+      chunkSize: chunkSize
+    )
+
+    return transformMLXStreamToFloatStream(modelStream)
+  }
+
+  /// Generate audio stream using instruct mode with style control.
+  func generateInstructStreaming(
+    textTokens: [Int],
+    instructText: String,
+    conditionals: CosyVoice3Conditionals,
+    sampling: Int = 25,
+    nTimesteps: Int = 10,
+    chunkSize: Int = 25
+  ) -> AsyncThrowingStream<[Float], Error> {
+    let textArray = MLXArray(textTokens.map { Int32($0) }).reshaped(1, -1)
+    let textLen = MLXArray([Int32(textTokens.count)])
+
+    var formattedInstruct = instructText
+    if !formattedInstruct.hasPrefix(Self.instructPrefix) {
+      formattedInstruct = Self.instructPrefix + formattedInstruct
+    }
+    if !formattedInstruct.hasSuffix(Self.endOfPromptMarker) {
+      formattedInstruct += Self.endOfPromptMarker
+    }
+
+    let instructTokens = encode(text: formattedInstruct, addSpecialTokens: false)
+    let instructArray = MLXArray(instructTokens.map { Int32($0) }).reshaped(1, -1)
+    let instructLen = MLXArray([Int32(instructTokens.count)])
+    let emptyPromptSpeechToken = MLXArray.zeros([1, 0], dtype: .int32)
+    let emptyPromptSpeechTokenLen = MLXArray([Int32(0)])
+
+    let modelStream = model.synthesizeStreaming(
+      text: textArray,
+      textLen: textLen,
+      promptText: instructArray,
+      promptTextLen: instructLen,
+      promptSpeechToken: conditionals.promptSpeechToken,
+      promptSpeechTokenLen: conditionals.promptSpeechTokenLen,
+      promptMel: conditionals.promptMel,
+      promptMelLen: conditionals.promptMelLen,
+      speakerEmbedding: conditionals.speakerEmbedding,
+      llmPromptSpeechToken: emptyPromptSpeechToken,
+      llmPromptSpeechTokenLen: emptyPromptSpeechTokenLen,
       sampling: sampling,
       nTimesteps: nTimesteps,
       chunkSize: chunkSize
@@ -681,7 +746,7 @@ actor CosyVoice3TTS {
     s3Tokenizer: @Sendable @escaping (MLXArray, MLXArray) -> (MLXArray, MLXArray)
   ) {
     // Truncate to max 30 seconds
-    let maxSamples = 30 * Self.outputSampleRate
+    let maxSamples = Self.maxReferenceDurationSeconds * Self.outputSampleRate
     var audioTruncated = audio
     if audio.shape[0] > maxSamples {
       audioTruncated = audio[0 ..< maxSamples]
@@ -757,9 +822,45 @@ actor CosyVoice3TTS {
 
   // MARK: - Tokenization
 
+  /// Preserve the special-token semantics used by the original PyTorch
+  /// implementation even when the Swift tokenizer does not recognize
+  /// `<|endofprompt|>` inline during plain-string encoding.
+  static func encodePreservingEndOfPrompt(
+    _ text: String,
+    endOfPromptTokenId: Int = endOfPromptTokenId,
+    encodePlainText: (String) -> [Int]
+  ) -> [Int] {
+    guard text.contains(endOfPromptMarker) else {
+      return encodePlainText(text)
+    }
+
+    let parts = text.components(separatedBy: endOfPromptMarker)
+    var tokens: [Int] = []
+    for index in parts.indices {
+      let part = parts[index]
+      if !part.isEmpty {
+        tokens.append(contentsOf: encodePlainText(part))
+      }
+      if index < parts.count - 1 {
+        tokens.append(endOfPromptTokenId)
+      }
+    }
+    return tokens
+  }
+
   /// Encode text to token IDs using the Qwen2 tokenizer
   func encode(text: String, addSpecialTokens: Bool = false) -> [Int] {
-    textTokenizer.encode(text: text, addSpecialTokens: addSpecialTokens)
+    if !addSpecialTokens {
+      let explicitEndOfPromptTokenId = tokenToId(Self.endOfPromptMarker) ?? Self.endOfPromptTokenId
+      return Self.encodePreservingEndOfPrompt(
+        text,
+        endOfPromptTokenId: explicitEndOfPromptTokenId
+      ) { plainText in
+        textTokenizer.encode(text: plainText, addSpecialTokens: false)
+      }
+    }
+
+    return textTokenizer.encode(text: text, addSpecialTokens: addSpecialTokens)
   }
 
   /// Decode token IDs back to text
@@ -776,19 +877,13 @@ actor CosyVoice3TTS {
 
   /// Simple audio resampling using linear interpolation
   private func resampleAudio(_ audio: MLXArray, fromRate: Int, toRate: Int) -> MLXArray {
-    if fromRate == toRate {
-      return audio
-    }
-
-    let ratio = Float(toRate) / Float(fromRate)
-    let audioBTC = audio.reshaped(1, -1, 1) // (1, T, 1)
-    let interpolated = linearInterpolate1d(audioBTC, scaleFactor: ratio)
-    return interpolated.squeezed() // Back to (T',)
+    AudioResampler.resample(audio, from: fromRate, to: toRate)
   }
 
   /// Compute 80-mel spectrogram for flow model (at 24kHz)
   private func computeMelSpectrogram80(audio: MLXArray) -> MLXArray {
-    // CosyVoice3 flow model mel spectrogram parameters
+    // The original PyTorch implementation uses `fmax=None`, which maps to
+    // Nyquist (12 kHz) at 24 kHz.
     let melSpec = s3genMelSpectrogram(
       y: audio,
       nFft: 1920,
@@ -797,7 +892,7 @@ actor CosyVoice3TTS {
       hopSize: 480,
       winSize: 1920,
       fmin: 0,
-      fmax: 8000,
+      fmax: Self.flowPromptMelFmax,
       center: false
     )
     // s3genMelSpectrogram returns (num_mels, T') for 1D input

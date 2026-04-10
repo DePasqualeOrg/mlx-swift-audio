@@ -18,11 +18,22 @@ import MLXNN
 /// Create using `CosyVoice3Engine.prepareSpeaker(from:)` methods.
 /// Can be reused across multiple `say()` or `generate()` calls for efficient multi-speaker scenarios.
 ///
-/// If the speaker has a transcription, zero-shot mode is used automatically for better voice alignment.
-/// Otherwise, cross-lingual mode is used (works across languages).
+/// If the speaker has an explicit reference transcription, zero-shot mode is used automatically
+/// for better voice alignment. Otherwise, cross-lingual mode is used.
+///
+/// This matches the standard frontend behavior in the original PyTorch
+/// implementation (`FunAudioLLM/CosyVoice`) in:
+/// - `cosyvoice/cli/frontend.py:_extract_speech_token`
+/// - `cosyvoice/cli/frontend.py:frontend_zero_shot`
+///
+/// The original PyTorch zero-shot path expects the caller to provide both:
+/// - a reference clip no longer than 30 seconds
+/// - the exact transcript for that same clip
 ///
 /// ```swift
-/// // Prepare speaker (auto-transcribes with Whisper by default)
+/// // Prepare speaker. Auto-transcribed text is metadata only and does not
+/// // enable the zero-shot mode used by the original PyTorch implementation;
+/// // pass `transcription:` explicitly for that.
 /// let speaker = try await engine.prepareSpeaker(from: url)
 /// try await engine.say("Hello world", speaker: speaker)
 ///
@@ -42,8 +53,12 @@ public struct CosyVoice3Speaker: Sendable {
   /// Description for display purposes
   public let description: String
 
-  /// Whether this speaker has transcription (enables zero-shot mode)
+  /// Whether this speaker has any transcription metadata available.
   public let hasTranscription: Bool
+
+  /// Whether the transcription was explicitly supplied by the caller.
+  /// Upstream CosyVoice3 zero-shot requires an explicit prompt transcript.
+  public let hasExplicitTranscription: Bool
 
   /// The transcription text (if available)
   public let transcription: String?
@@ -53,13 +68,15 @@ public struct CosyVoice3Speaker: Sendable {
     sampleRate: Int,
     sampleCount: Int,
     description: String,
-    transcription: String?
+    transcription: String?,
+    hasExplicitTranscription: Bool = false
   ) {
     self.conditionals = conditionals
     self.sampleRate = sampleRate
     duration = Double(sampleCount) / Double(sampleRate)
     self.description = description
     hasTranscription = transcription != nil
+    self.hasExplicitTranscription = transcription != nil && hasExplicitTranscription
     self.transcription = transcription
   }
 }
@@ -141,7 +158,15 @@ public final class CosyVoice3Engine: TTSEngine {
   /// Whether source audio is loaded for voice conversion
   public private(set) var isSourceAudioLoaded: Bool = false
 
-  /// Whether to auto-transcribe reference audio for zero-shot mode
+  /// Whether to auto-transcribe reference audio for metadata/display when the
+  /// caller did not provide a transcript.
+  ///
+  /// This is a Swift convenience only. The standard zero-shot path in the
+  /// original PyTorch implementation, in
+  /// `cosyvoice/cli/frontend.py:frontend_zero_shot`, uses explicit
+  /// caller-supplied `prompt_text`; auto-transcribed text is not used here as a
+  /// zero-shot prompt because misalignment between STT text and prompt audio can
+  /// produce unstable outputs.
   public var autoTranscribe: Bool = true
 
   // MARK: - Private Properties
@@ -157,6 +182,11 @@ public final class CosyVoice3Engine: TTSEngine {
 
   /// Repo ID for S3 tokenizer
   private static let s3TokenizerRepoId = "mlx-community/S3TokenizerV3"
+
+  /// Standard frontend limit from the original PyTorch implementation in
+  /// `cosyvoice/cli/frontend.py:_extract_speech_token`, which asserts that
+  /// prompt audio must be 30 seconds or shorter before speech-token extraction.
+  private nonisolated static let maxReferenceDurationSeconds = 30
 
   // MARK: - Initialization
 
@@ -309,8 +339,15 @@ public final class CosyVoice3Engine: TTSEngine {
   ///
   /// - Parameters:
   ///   - url: URL to audio file (local file path or remote URL)
-  ///   - transcription: Optional transcription of the reference audio (enables zero-shot mode).
-  ///                    If nil and `autoTranscribe` is true, Whisper will be used to transcribe.
+  ///   - transcription: Optional explicit transcription of the reference audio.
+  ///                    Providing this enables the standard zero-shot mode used
+  ///                    by the original PyTorch implementation.
+  ///                    This should match the exact audio segment after any
+  ///                    user-side trimming, with no cut-off words at either end.
+  ///                    If nil and `autoTranscribe` is true, Whisper may still
+  ///                    produce a transcript for metadata, but Swift will not use
+  ///                    that auto-transcribed text as a zero-shot prompt.
+  ///                    Reference: `cosyvoice/cli/frontend.py:frontend_zero_shot`.
   /// - Returns: Prepared speaker ready for generation
   public func prepareSpeaker(
     from url: URL,
@@ -371,7 +408,54 @@ public final class CosyVoice3Engine: TTSEngine {
     try await prepareSpeaker(from: cosyVoice3DefaultReferenceAudioURL, transcription: transcription)
   }
 
+  nonisolated static func validateReferenceDuration(sampleCount: Int, sampleRate: Int) throws {
+    let maxSamples = maxReferenceDurationSeconds * sampleRate
+    guard sampleCount <= maxSamples else {
+      throw TTSError.invalidArgument(
+        "CosyVoice3 reference audio longer than \(maxReferenceDurationSeconds) seconds is not supported. Trim the reference clip to \(maxReferenceDurationSeconds) seconds or less."
+      )
+    }
+  }
+
+  nonisolated static func shouldUseZeroShot(
+    hasExplicitTranscription: Bool,
+    generationMode: GenerationMode,
+    hasInstruction: Bool
+  ) -> Bool {
+    hasExplicitTranscription && generationMode != .crossLingual && !hasInstruction
+  }
+
+  nonisolated static func shouldUseZeroShot(
+    speaker: CosyVoice3Speaker,
+    generationMode: GenerationMode,
+    hasInstruction: Bool
+  ) -> Bool {
+    shouldUseZeroShot(
+      hasExplicitTranscription: speaker.hasExplicitTranscription,
+      generationMode: generationMode,
+      hasInstruction: hasInstruction
+    )
+  }
+
   // MARK: - Private Speaker Preparation
+
+  private func validateZeroShotAvailability(
+    for speaker: CosyVoice3Speaker,
+    generationMode: GenerationMode,
+    hasInstruction: Bool
+  ) throws {
+    // Match the standard zero-shot contract from the original PyTorch
+    // implementation in
+    // `cosyvoice/cli/frontend.py:frontend_zero_shot`: zero-shot uses explicit
+    // caller-provided `prompt_text` paired with the reference audio. When the
+    // transcript is not explicit, Swift falls back to cross-lingual instead of
+    // inventing a zero-shot prompt from STT output.
+    guard generationMode != .zeroShot || hasInstruction || speaker.hasExplicitTranscription else {
+      throw TTSError.invalidArgument(
+        "CosyVoice3 zero-shot mode requires an explicit reference transcription. Auto-transcribed reference text is not used as zero-shot prompt text."
+      )
+    }
+  }
 
   private func prepareSpeakerFromSamples(
     _ samples: [Float],
@@ -383,78 +467,18 @@ public final class CosyVoice3Engine: TTSEngine {
   ) async throws -> CosyVoice3Speaker {
     Log.tts.debug("Preparing speaker: \(baseDescription)")
 
-    // Resample to model's output sample rate if needed
-    let targetSampleRate = CosyVoice3Constants.sampleRate
-    var processedSamples: [Float] = if sampleRate != targetSampleRate {
-      resampleAudio(samples, fromRate: sampleRate, toRate: targetSampleRate)
-    } else {
-      samples
-    }
+    try Self.validateReferenceDuration(sampleCount: samples.count, sampleRate: sampleRate)
 
-    let originalDuration = Float(processedSamples.count) / Float(targetSampleRate)
-    Log.tts.debug("Original reference audio duration: \(originalDuration)s")
+    let referenceDuration = Float(samples.count) / Float(sampleRate)
+    Log.tts.debug("Reference audio duration: \(referenceDuration)s")
 
-    // Trim silence
-    processedSamples = AudioTrimmer.trimSilence(
-      processedSamples,
-      sampleRate: targetSampleRate,
-      config: .cosyVoice2
-    )
+    let explicitTranscription = transcription?.trimmingCharacters(in: .whitespacesAndNewlines)
+    let hasExplicitTranscription = !(explicitTranscription?.isEmpty ?? true)
+    var finalTranscription = hasExplicitTranscription ? explicitTranscription : nil
 
-    let silenceTrimmedDuration = Float(processedSamples.count) / Float(targetSampleRate)
-    Log.tts.debug("After silence trimming: \(silenceTrimmedDuration)s")
-
-    // Handle max duration (30 seconds)
-    let maxDuration: Float = 30.0
-    let maxSamples = Int(maxDuration) * targetSampleRate
-
-    var finalTranscription = transcription
-    var clippedAtWordBoundary = false
-
-    if processedSamples.count > maxSamples {
-      if autoTranscribe {
-        Log.tts.debug("Audio exceeds \(maxDuration)s, using word-boundary clipping...")
-
-        let result = try await transcribeWithTimestamps(
-          samples: processedSamples,
-          sampleRate: targetSampleRate,
-          wordTimestamps: true
-        )
-
-        var allWords = result.segments.flatMap { $0.words ?? [] }
-
-        if !allWords.isEmpty {
-          allWords = AudioTrimmer.dropUnreliableTrailingWords(
-            allWords,
-            audioDuration: silenceTrimmedDuration,
-            config: .cosyVoice2
-          )
-
-          if let (clipSample, validWords) = AudioTrimmer.findWordBoundaryClipPoint(
-            words: allWords,
-            maxDuration: maxDuration,
-            sampleRate: targetSampleRate
-          ) {
-            processedSamples = Array(processedSamples.prefix(clipSample))
-            finalTranscription = validWords.map(\.word).joined().trimmingCharacters(in: .whitespaces)
-            clippedAtWordBoundary = true
-            let newDuration = Float(processedSamples.count) / Float(targetSampleRate)
-            Log.tts.debug("Clipped at word boundary: \(newDuration)s")
-          } else {
-            processedSamples = Array(processedSamples.prefix(maxSamples))
-          }
-        } else {
-          processedSamples = Array(processedSamples.prefix(maxSamples))
-        }
-      } else {
-        processedSamples = Array(processedSamples.prefix(maxSamples))
-      }
-    }
-
-    // Auto-transcribe if enabled
-    if finalTranscription == nil, autoTranscribe, !clippedAtWordBoundary {
-      Log.tts.debug("Auto-transcribing reference audio...")
-      finalTranscription = try await transcribe(samples: processedSamples, sampleRate: targetSampleRate)
+    if finalTranscription == nil, autoTranscribe {
+      Log.tts.debug("Auto-transcribing reference audio for metadata...")
+      finalTranscription = try await transcribe(samples: samples, sampleRate: sampleRate)
     }
 
     finalTranscription = finalTranscription?.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -462,49 +486,41 @@ public final class CosyVoice3Engine: TTSEngine {
       finalTranscription = nil
     }
 
-    let refWav = MLXArray(processedSamples)
+    let conditionalsWav = MLXArray(samples)
 
     nonisolated(unsafe) let tokenizerUnsafe = tokenizer
 
-    let conditionals = await tts.prepareConditionals(
-      refWav: refWav,
-      refText: finalTranscription,
+    let conditionals = try await tts.prepareConditionals(
+      refWav: conditionalsWav,
+      refSampleRate: sampleRate,
+      refText: hasExplicitTranscription ? finalTranscription : nil,
       s3Tokenizer: { mel, melLen in tokenizerUnsafe(mel, melLen: melLen) }
     )
 
-    let description = finalTranscription != nil
-      ? "\(baseDescription) (with transcription)"
-      : baseDescription
+    let description: String = if hasExplicitTranscription {
+      "\(baseDescription) (with transcription)"
+    } else if finalTranscription != nil {
+      "\(baseDescription) (auto-transcribed)"
+    } else {
+      baseDescription
+    }
 
     Log.tts.debug("Speaker prepared: \(description)")
 
     return CosyVoice3Speaker(
       conditionals: conditionals,
-      sampleRate: targetSampleRate,
-      sampleCount: processedSamples.count,
+      sampleRate: sampleRate,
+      sampleCount: samples.count,
       description: description,
-      transcription: finalTranscription
+      transcription: finalTranscription,
+      hasExplicitTranscription: hasExplicitTranscription
     )
   }
 
   // MARK: - Audio Loading Helpers
 
   private func resampleAudio(_ samples: [Float], fromRate: Int, toRate: Int) -> [Float] {
-    if fromRate == toRate { return samples }
-
-    let ratio = Float(toRate) / Float(fromRate)
-    let newLength = Int(Float(samples.count) * ratio)
-    var resampled = [Float](repeating: 0, count: newLength)
-
-    for i in 0 ..< newLength {
-      let srcIdx = Float(i) / ratio
-      let idx0 = Int(srcIdx)
-      let idx1 = min(idx0 + 1, samples.count - 1)
-      let frac = srcIdx - Float(idx0)
-      resampled[i] = samples[idx0] * (1 - frac) + samples[idx1] * frac
-    }
-
-    return resampled
+    AudioResampler.resample(MLXArray(samples), from: fromRate, to: toRate).asArray(Float.self)
   }
 
   private func loadAudioSamples(from url: URL) async throws -> (samples: [Float], sampleRate: Int) {
@@ -570,7 +586,7 @@ public final class CosyVoice3Engine: TTSEngine {
   /// Generate audio from text
   ///
   /// Automatically selects zero-shot or cross-lingual mode based on whether the speaker
-  /// has a transcription.
+  /// has an explicit reference transcription.
   public func generate(
     _ text: String,
     speaker: CosyVoice3Speaker? = nil,
@@ -604,57 +620,69 @@ public final class CosyVoice3Engine: TTSEngine {
       throw TTSError.modelNotLoaded
     }
 
-    // Tokenize input text
-    let textTokens = await cosyVoice3TTS.encode(text: text)
-
     // Generate based on mode or instruction
-    let result: TTSGenerationResult
-
+    let textChunks = await splitTextForInference(text, using: cosyVoice3TTS)
     let effectiveInstruction = instruction ?? (generationMode == .instruct ? instructText : nil)
+    let hasInstruction = !(effectiveInstruction?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ?? true)
 
-    if let instruction = effectiveInstruction,
-       !instruction.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-    {
-      // Instruct mode
-      result = try await cosyVoice3TTS.generateInstruct(
-        text: text,
-        textTokens: textTokens,
-        instructText: instruction,
-        conditionals: speaker.conditionals,
-        sampling: sampling,
-        nTimesteps: nTimesteps
-      )
-    } else if generationMode == .voiceConversion {
+    if generationMode == .voiceConversion {
       throw TTSError.invalidArgument(
         "Voice conversion requires source audio. Use convertVoice(from:to:) instead."
       )
-    } else if speaker.hasTranscription, generationMode != .crossLingual {
-      // Zero-shot mode
-      result = try await cosyVoice3TTS.generateZeroShot(
-        text: text,
-        textTokens: textTokens,
-        conditionals: speaker.conditionals,
-        sampling: sampling,
-        nTimesteps: nTimesteps
-      )
-    } else {
-      // Cross-lingual mode
-      result = try await cosyVoice3TTS.generateCrossLingual(
-        text: text,
-        textTokens: textTokens,
-        conditionals: speaker.conditionals,
-        sampling: sampling,
-        nTimesteps: nTimesteps
-      )
     }
 
-    Log.tts.timing("CosyVoice3 generation", duration: result.processingTime)
-    lastGeneratedAudioURL = playback.saveAudioFile(samples: result.audio, sampleRate: result.sampleRate)
+    var combinedAudio: [Float] = []
+    var totalProcessingTime: TimeInterval = 0
+
+    try validateZeroShotAvailability(for: speaker, generationMode: generationMode, hasInstruction: hasInstruction)
+
+    for textChunk in textChunks {
+      let textTokens = await cosyVoice3TTS.encode(text: textChunk)
+      let result: TTSGenerationResult = if let instruction = effectiveInstruction, hasInstruction {
+        try await cosyVoice3TTS.generateInstruct(
+          text: textChunk,
+          textTokens: textTokens,
+          instructText: instruction,
+          conditionals: speaker.conditionals,
+          sampling: sampling,
+          nTimesteps: nTimesteps
+        )
+      } else if Self.shouldUseZeroShot(
+        speaker: speaker,
+        generationMode: generationMode,
+        hasInstruction: hasInstruction
+      ) {
+        try await cosyVoice3TTS.generateZeroShot(
+          text: textChunk,
+          textTokens: textTokens,
+          conditionals: speaker.conditionals,
+          sampling: sampling,
+          nTimesteps: nTimesteps
+        )
+      } else {
+        try await cosyVoice3TTS.generateCrossLingual(
+          text: textChunk,
+          textTokens: textTokens,
+          conditionals: speaker.conditionals,
+          sampling: sampling,
+          nTimesteps: nTimesteps
+        )
+      }
+
+      combinedAudio.append(contentsOf: result.audio)
+      totalProcessingTime += result.processingTime
+    }
+
+    Log.tts.timing("CosyVoice3 generation", duration: totalProcessingTime)
+    lastGeneratedAudioURL = playback.saveAudioFile(
+      samples: combinedAudio,
+      sampleRate: CosyVoice3Constants.sampleRate
+    )
 
     return .samples(
-      data: result.audio,
-      sampleRate: result.sampleRate,
-      processingTime: result.processingTime
+      data: combinedAudio,
+      sampleRate: CosyVoice3Constants.sampleRate,
+      processingTime: totalProcessingTime
     )
   }
 
@@ -781,17 +809,19 @@ public final class CosyVoice3Engine: TTSEngine {
   /// - Parameters:
   ///   - text: The text to synthesize
   ///   - speaker: Prepared speaker profile (if nil, uses default)
+  ///   - instruction: Optional one-shot style instruction for instruct-mode synthesis
   ///   - granularity: Streaming granularity (if nil, uses `defaultStreamingGranularity`)
-  ///   - chunkSize: Number of tokens per audio chunk (only used for `.token` granularity, default: 20).
+  ///   - chunkSize: Number of tokens per audio chunk (only used for `.token` granularity, default: 25).
   ///     Smaller values give faster time-to-first-audio but more processing overhead.
-  ///     Each token produces ~0.08s of audio (at tokenMelRatio=2, 25Hz mel rate).
+  ///     Each token produces ~0.04s of audio (at tokenMelRatio=2, 50Hz mel rate).
   /// - Returns: An async stream of audio chunks
   /// - Throws: `TTSError.unsupportedStreamingGranularity` if the requested granularity is not supported
   public func generateStreaming(
     _ text: String,
     speaker: CosyVoice3Speaker? = nil,
+    instruction: String? = nil,
     granularity: StreamingGranularity? = nil,
-    chunkSize: Int = 20
+    chunkSize: Int = 25
   ) -> AsyncThrowingStream<AudioChunk, Error> {
     let effectiveGranularity = granularity ?? defaultStreamingGranularity
 
@@ -814,12 +844,12 @@ public final class CosyVoice3Engine: TTSEngine {
 
     switch effectiveGranularity {
       case .token:
-        return generateStreamingTokenLevel(text, speaker: speaker, chunkSize: chunkSize)
+        return generateStreamingTokenLevel(text, speaker: speaker, instruction: instruction, chunkSize: chunkSize)
       case .sentence:
-        return generateStreamingSentenceLevel(text, speaker: speaker)
+        return generateStreamingSentenceLevel(text, speaker: speaker, instruction: instruction)
       case .frame:
         // Unreachable: guard above rejects unsupported granularities
-        return generateStreamingSentenceLevel(text, speaker: speaker)
+        return generateStreamingSentenceLevel(text, speaker: speaker, instruction: instruction)
     }
   }
 
@@ -828,19 +858,27 @@ public final class CosyVoice3Engine: TTSEngine {
   /// - Parameters:
   ///   - text: The text to synthesize
   ///   - speaker: Prepared speaker profile (if nil, uses default)
+  ///   - instruction: Optional one-shot style instruction for instruct-mode synthesis
   ///   - granularity: Streaming granularity (if nil, uses `defaultStreamingGranularity`)
-  ///   - chunkSize: Number of tokens per audio chunk (only used for `.token` granularity, default: 20)
+  ///   - chunkSize: Number of tokens per audio chunk (only used for `.token` granularity, default: 25)
   /// - Returns: The complete audio result after playback
   /// - Throws: `TTSError.unsupportedStreamingGranularity` if the requested granularity is not supported
   @discardableResult
   public func sayStreaming(
     _ text: String,
     speaker: CosyVoice3Speaker? = nil,
+    instruction: String? = nil,
     granularity: StreamingGranularity? = nil,
-    chunkSize: Int = 20
+    chunkSize: Int = 25
   ) async throws -> AudioResult {
     let (samples, processingTime) = try await playback.playStream(
-      generateStreaming(text, speaker: speaker, granularity: granularity, chunkSize: chunkSize),
+      generateStreaming(
+        text,
+        speaker: speaker,
+        instruction: instruction,
+        granularity: granularity,
+        chunkSize: chunkSize
+      ),
       setPlaying: { self.isPlaying = $0 }
     )
 
@@ -859,6 +897,7 @@ public final class CosyVoice3Engine: TTSEngine {
   private func generateStreamingTokenLevel(
     _ text: String,
     speaker: CosyVoice3Speaker?,
+    instruction: String?,
     chunkSize: Int
   ) -> AsyncThrowingStream<AudioChunk, Error> {
     let trimmedText = text.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -871,6 +910,8 @@ public final class CosyVoice3Engine: TTSEngine {
     let currentSampling = sampling
     let currentNTimesteps = nTimesteps
     let currentGenerationMode = generationMode
+    let currentInstructText = instructText
+    let currentInstruction = instruction
 
     return playback.createGenerationStream(
       setGenerating: { self.isGenerating = $0 },
@@ -896,37 +937,73 @@ public final class CosyVoice3Engine: TTSEngine {
         throw TTSError.modelNotLoaded
       }
 
-      // Tokenize input text
-      let textTokens = await cosyVoice3TTS.encode(text: trimmedText)
-      let useZeroShot = speaker.hasTranscription && currentGenerationMode != .crossLingual
-
-      // Get the appropriate streaming generator
-      let audioStream: AsyncThrowingStream<[Float], Error> = if useZeroShot {
-        await cosyVoice3TTS.generateZeroShotStreaming(
-          textTokens: textTokens,
-          conditionals: speaker.conditionals,
-          sampling: currentSampling,
-          nTimesteps: currentNTimesteps,
-          chunkSize: chunkSize
-        )
-      } else {
-        await cosyVoice3TTS.generateCrossLingualStreaming(
-          text: trimmedText,
-          conditionals: speaker.conditionals,
-          sampling: currentSampling,
-          nTimesteps: currentNTimesteps,
-          chunkSize: chunkSize
-        )
-      }
-
-      // Transform [Float] stream to AudioChunk stream with timing
+      let textChunks = await splitTextForInference(trimmedText, using: cosyVoice3TTS)
+      let effectiveInstruction = currentInstruction ?? (currentGenerationMode == .instruct ? currentInstructText : "")
+      let hasInstruction = !effectiveInstruction.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
       let startTime = Date()
-      return mapAsyncStream(audioStream) { samples in
-        AudioChunk(
-          samples: samples,
-          sampleRate: sampleRate,
-          processingTime: Date().timeIntervalSince(startTime)
-        )
+      return AsyncThrowingStream { continuation in
+        let task = Task {
+          do {
+            for textChunk in textChunks {
+              guard !Task.isCancelled else { break }
+
+              let textTokens = await cosyVoice3TTS.encode(text: textChunk)
+              try self.validateZeroShotAvailability(
+                for: speaker,
+                generationMode: currentGenerationMode,
+                hasInstruction: hasInstruction
+              )
+              let useZeroShot = Self.shouldUseZeroShot(
+                speaker: speaker,
+                generationMode: currentGenerationMode,
+                hasInstruction: hasInstruction
+              )
+
+              let audioStream: AsyncThrowingStream<[Float], Error> = if hasInstruction {
+                await cosyVoice3TTS.generateInstructStreaming(
+                  textTokens: textTokens,
+                  instructText: effectiveInstruction,
+                  conditionals: speaker.conditionals,
+                  sampling: currentSampling,
+                  nTimesteps: currentNTimesteps,
+                  chunkSize: chunkSize
+                )
+              } else if useZeroShot {
+                await cosyVoice3TTS.generateZeroShotStreaming(
+                  textTokens: textTokens,
+                  conditionals: speaker.conditionals,
+                  sampling: currentSampling,
+                  nTimesteps: currentNTimesteps,
+                  chunkSize: chunkSize
+                )
+              } else {
+                await cosyVoice3TTS.generateCrossLingualStreaming(
+                  text: textChunk,
+                  conditionals: speaker.conditionals,
+                  sampling: currentSampling,
+                  nTimesteps: currentNTimesteps,
+                  chunkSize: chunkSize
+                )
+              }
+
+              for try await samples in audioStream {
+                continuation.yield(AudioChunk(
+                  samples: samples,
+                  sampleRate: sampleRate,
+                  processingTime: Date().timeIntervalSince(startTime)
+                ))
+              }
+            }
+            continuation.finish()
+          } catch is CancellationError {
+            continuation.finish()
+          } catch {
+            continuation.finish(throwing: error)
+          }
+        }
+        continuation.onTermination = { _ in
+          task.cancel()
+        }
       }
     }
   }
@@ -934,7 +1011,8 @@ public final class CosyVoice3Engine: TTSEngine {
   /// Sentence-level streaming implementation
   private func generateStreamingSentenceLevel(
     _ text: String,
-    speaker: CosyVoice3Speaker?
+    speaker: CosyVoice3Speaker?,
+    instruction: String?
   ) -> AsyncThrowingStream<AudioChunk, Error> {
     let trimmedText = text.trimmingCharacters(in: .whitespacesAndNewlines)
 
@@ -946,6 +1024,8 @@ public final class CosyVoice3Engine: TTSEngine {
     let currentSampling = sampling
     let currentNTimesteps = nTimesteps
     let currentGenerationMode = generationMode
+    let currentInstructText = instructText
+    let currentInstruction = instruction
 
     return playback.createGenerationStream(
       setGenerating: { self.isGenerating = $0 },
@@ -970,21 +1050,41 @@ public final class CosyVoice3Engine: TTSEngine {
         throw TTSError.modelNotLoaded
       }
 
-      let sentences = Self.splitIntoSentences(trimmedText)
+      let textChunks = await splitTextForInference(trimmedText, using: cosyVoice3TTS)
 
       let startTime = Date()
       return AsyncThrowingStream { continuation in
         let task = Task {
           do {
-            for sentence in sentences {
+            for textChunk in textChunks {
               guard !Task.isCancelled else { break }
 
-              let textTokens = await cosyVoice3TTS.encode(text: sentence)
-              let useZeroShot = speaker.hasTranscription && currentGenerationMode != .crossLingual
+              let textTokens = await cosyVoice3TTS.encode(text: textChunk)
+              let effectiveInstruction = currentInstruction ?? (currentGenerationMode == .instruct ? currentInstructText : "")
+              let hasInstruction = !effectiveInstruction.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+              try self.validateZeroShotAvailability(
+                for: speaker,
+                generationMode: currentGenerationMode,
+                hasInstruction: hasInstruction
+              )
+              let useZeroShot = Self.shouldUseZeroShot(
+                speaker: speaker,
+                generationMode: currentGenerationMode,
+                hasInstruction: hasInstruction
+              )
 
-              let result: TTSGenerationResult = if useZeroShot {
+              let result: TTSGenerationResult = if hasInstruction {
+                try await cosyVoice3TTS.generateInstruct(
+                  text: textChunk,
+                  textTokens: textTokens,
+                  instructText: effectiveInstruction,
+                  conditionals: speaker.conditionals,
+                  sampling: currentSampling,
+                  nTimesteps: currentNTimesteps
+                )
+              } else if useZeroShot {
                 try await cosyVoice3TTS.generateZeroShot(
-                  text: sentence,
+                  text: textChunk,
                   textTokens: textTokens,
                   conditionals: speaker.conditionals,
                   sampling: currentSampling,
@@ -992,7 +1092,7 @@ public final class CosyVoice3Engine: TTSEngine {
                 )
               } else {
                 try await cosyVoice3TTS.generateCrossLingual(
-                  text: sentence,
+                  text: textChunk,
                   textTokens: textTokens,
                   conditionals: speaker.conditionals,
                   sampling: currentSampling,
@@ -1018,6 +1118,94 @@ public final class CosyVoice3Engine: TTSEngine {
           task.cancel()
         }
       }
+    }
+  }
+
+  private func splitTextForInference(_ text: String, using tts: CosyVoice3TTS) async -> [String] {
+    let trimmedText = text.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !trimmedText.isEmpty else { return [] }
+
+    // Match the original PyTorch frontend behavior: bypass splitting when inline control tags are present.
+    if trimmedText.contains("<|"), trimmedText.contains("|>") {
+      return [trimmedText]
+    }
+
+    let isChinese = Self.containsChinese(trimmedText)
+    let punctuation: Set<Character> = if isChinese {
+      ["。", "？", "！", "；", "：", "、", ".", "?", "!", ";"]
+    } else {
+      [".", "?", "!", ";", ":"]
+    }
+
+    var normalizedText = trimmedText
+    if let lastChar = normalizedText.last, !punctuation.contains(lastChar) {
+      normalizedText.append(isChinese ? "。" : ".")
+    }
+
+    var utterances: [String] = []
+    var startIndex = normalizedText.startIndex
+    var index = normalizedText.startIndex
+
+    while index < normalizedText.endIndex {
+      let character = normalizedText[index]
+      if punctuation.contains(character) {
+        var endIndex = normalizedText.index(after: index)
+        if endIndex < normalizedText.endIndex, ["\"", "”"].contains(normalizedText[endIndex]) {
+          endIndex = normalizedText.index(after: endIndex)
+        }
+
+        let utterance = String(normalizedText[startIndex ..< endIndex])
+          .trimmingCharacters(in: .whitespacesAndNewlines)
+        if !utterance.isEmpty {
+          utterances.append(utterance)
+        }
+        startIndex = endIndex
+      }
+      index = normalizedText.index(after: index)
+    }
+
+    func chunkLength(_ value: String) async -> Int {
+      if value.isEmpty { return 0 }
+      if isChinese { return value.count }
+      return await tts.encode(text: value).count
+    }
+
+    var finalChunks: [String] = []
+    var currentChunk = ""
+
+    for utterance in utterances {
+      let combined = currentChunk + utterance
+      if await chunkLength(combined) > 80, await chunkLength(currentChunk) > 60 {
+        if !Self.isOnlyPunctuation(currentChunk) {
+          finalChunks.append(currentChunk)
+        }
+        currentChunk = ""
+      }
+      currentChunk += utterance
+    }
+
+    if !currentChunk.isEmpty {
+      if await chunkLength(currentChunk) < 20, !finalChunks.isEmpty {
+        finalChunks[finalChunks.count - 1] += currentChunk
+      } else if !Self.isOnlyPunctuation(currentChunk) {
+        finalChunks.append(currentChunk)
+      }
+    }
+
+    return finalChunks.isEmpty ? [trimmedText] : finalChunks
+  }
+
+  private static func containsChinese(_ text: String) -> Bool {
+    text.unicodeScalars.contains { scalar in
+      (0x4E00 ... 0x9FFF).contains(scalar.value)
+    }
+  }
+
+  private static func isOnlyPunctuation(_ text: String) -> Bool {
+    let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !trimmed.isEmpty else { return true }
+    return trimmed.unicodeScalars.allSatisfy {
+      CharacterSet.punctuationCharacters.contains($0) || CharacterSet.symbols.contains($0)
     }
   }
 

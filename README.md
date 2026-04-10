@@ -16,6 +16,8 @@
   - [Whisper](https://github.com/openai/whisper)
   - [Fun-ASR](https://github.com/modelscope/FunASR)
 
+CosyVoice3 reference-audio constraints and zero-shot guidance are documented in [docs/CosyVoice3.md](docs/CosyVoice3.md).
+
 ## Installation
 
 In Xcode, go to File > Add Package Dependencies and enter `https://github.com/DePasqualeOrg/mlx-swift-audio`. Select the `main` branch, then add `MLXAudio` to your target. If you want to use Kokoro (which has GPLv3 dependencies), also add the `Kokoro` library.
@@ -38,6 +40,21 @@ try await cosyVoice.say("This is exciting news!", speaker: speaker, instruction:
 
 // Voice conversion - transform audio to sound like the speaker
 let converted = try await cosyVoice.convertVoice(from: sourceAudioURL, to: speaker)
+
+// CosyVoice3 - stricter zero-shot prompt handling
+let cosyVoice3 = TTS.cosyVoice3()
+try await cosyVoice3.load()
+
+// Cross-lingual is the safe default when you only have a reference clip.
+let crossLingualSpeaker = try await cosyVoice3.prepareSpeaker(from: audioFileURL)
+try await cosyVoice3.say("Speaking with your voice.", speaker: crossLingualSpeaker)
+
+// For zero-shot, pass an explicit transcript for the exact <=30s reference clip.
+let zeroShotSpeaker = try await cosyVoice3.prepareSpeaker(
+  from: audioFileURL,
+  transcription: "Exact transcript of the clipped reference audio."
+)
+try await cosyVoice3.say("Speaking with tighter semantic alignment.", speaker: zeroShotSpeaker)
 
 // Chatterbox - custom voices from reference audio and emotion control
 let chatterbox = TTS.chatterbox()

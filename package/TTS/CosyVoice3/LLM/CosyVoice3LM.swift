@@ -10,6 +10,8 @@ import MLXNN
 
 // MARK: - CosyVoice3LM (Main LLM)
 
+private let cosyVoice3EndOfPromptTokenId = 151_646
+
 /// Qwen2-based Language Model for CosyVoice3 speech token generation
 ///
 /// Key differences from Qwen2LM (CosyVoice2):
@@ -85,21 +87,24 @@ class CosyVoice3LM: Module {
       fatalError("Sampling function not set")
     }
 
-    var numTrials = 0
-    let maxTrials = 100
+    // Match the original PyTorch implementation exactly: when `ignore_eos` is
+    // enabled it only masks index `speech_token_size` once before sampling.
+    let scores = if ignoreEos {
+      weightedScores.at[speechTokenSize].add(MLXArray(-Float.infinity))
+    } else {
+      weightedScores
+    }
+    return samplingFn(scores, decodedTokens, sampling)
+  }
 
-    while true {
-      let topIds = samplingFn(weightedScores, decodedTokens, sampling)
-
-      // If not ignoring EOS, or sampled token is valid speech token, accept it
-      if !ignoreEos || topIds < speechTokenSize {
-        return topIds
-      }
-
-      numTrials += 1
-      if numTrials > maxTrials {
-        throw CosyVoice3Error.maxSamplingTrialsExceeded
-      }
+  /// Upstream CosyVoice3 requires `<|endofprompt|>` to be present either in
+  /// the prompt text or directly in the text stream before decoding begins.
+  private func validateEndOfPromptToken(_ fullText: MLXArray) throws {
+    let hasEndOfPrompt = MLX.any(fullText .== MLXArray(Int32(cosyVoice3EndOfPromptTokenId))).item(Bool.self)
+    guard hasEndOfPrompt else {
+      throw CosyVoice3Error.invalidInput(
+        "<|endofprompt|> not detected in CosyVoice3 text or prompt_text. Ensure the prompt format includes that special token."
+      )
     }
   }
 
@@ -130,6 +135,7 @@ class CosyVoice3LM: Module {
     // Concatenate prompt and input text
     let fullText = MLX.concatenated([promptText, text], axis: 1)
     let fullTextLen = textLen + promptTextLen
+    try validateEndOfPromptToken(fullText)
 
     // Embed text tokens using Qwen2's embedding
     let textEmb = llm.embedTokens(fullText)
@@ -226,6 +232,13 @@ class CosyVoice3LM: Module {
     // Concatenate prompt and input text
     let fullText = MLX.concatenated([promptText, text], axis: 1)
     let fullTextLen = textLen + promptTextLen
+    do {
+      try validateEndOfPromptToken(fullText)
+    } catch {
+      return AsyncThrowingStream { continuation in
+        continuation.finish(throwing: error)
+      }
+    }
 
     // Embed text tokens using Qwen2's embedding
     let textEmb = llm.embedTokens(fullText)
@@ -403,9 +416,11 @@ func cosyVoice3RasSampling(
     let recentTokens = Array(decodedTokens.suffix(winSize))
     let repNum = recentTokens.filter { $0 == topIds }.count
 
-    // If repetition exceeds threshold, fall back to random sampling
+    // Match the original PyTorch implementation's RAS behavior: mask the
+    // repeated token, then sample again.
     if Float(repNum) >= Float(winSize) * tauR {
-      let probs = MLX.softmax(logits)
+      let adjustedLogits = logits.at[topIds].add(MLXArray(-Float.infinity))
+      let probs = MLX.softmax(adjustedLogits)
       topIds = Int(MLXRandom.categorical(MLX.log(probs)).item(Int32.self))
     }
   }
@@ -430,8 +445,8 @@ func cosyVoice3TopKSampling(logits: MLXArray, decodedTokens _: [Int], topK: Int 
 
 /// Sample token IDs with optional EOS rejection (standalone version for async contexts)
 ///
-/// When `ignoreEos` is true and a stop token (>= speechTokenSize) is sampled,
-/// the function retries sampling up to `maxTrials` times until a valid speech token is found.
+/// Matches the original PyTorch implementation: when `ignoreEos` is true, only index
+/// `speechTokenSize` is masked once before sampling.
 func cosyVoice3SamplingWithEosRejection(
   logits: MLXArray,
   decodedTokens: [Int],
@@ -442,31 +457,22 @@ func cosyVoice3SamplingWithEosRejection(
   topK: Int = 25,
   winSize: Int = 10,
   tauR: Float = 0.1,
-  maxTrials: Int = 100
 ) throws -> Int {
-  var numTrials = 0
-
-  while true {
-    let topIds = cosyVoice3RasSampling(
-      logits: logits,
-      decodedTokens: decodedTokens,
-      sampling: sampling,
-      topP: topP,
-      topK: topK,
-      winSize: winSize,
-      tauR: tauR
-    )
-
-    // If not ignoring EOS, or sampled token is valid speech token, accept it
-    if !ignoreEos || topIds < speechTokenSize {
-      return topIds
-    }
-
-    numTrials += 1
-    if numTrials > maxTrials {
-      throw CosyVoice3Error.maxSamplingTrialsExceeded
-    }
+  let adjustedLogits = if ignoreEos {
+    logits.at[speechTokenSize].add(MLXArray(-Float.infinity))
+  } else {
+    logits
   }
+
+  return cosyVoice3RasSampling(
+    logits: adjustedLogits,
+    decodedTokens: decodedTokens,
+    sampling: sampling,
+    topP: topP,
+    topK: topK,
+    winSize: winSize,
+    tauR: tauR
+  )
 }
 
 // MARK: - Error Types
